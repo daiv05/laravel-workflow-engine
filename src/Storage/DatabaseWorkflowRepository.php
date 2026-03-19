@@ -163,6 +163,11 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
     public function appendHistory(array $history): void
     {
         $timestamp = (new DateTimeImmutable())->format(DATE_ATOM);
+        $payload = $history['payload'] ?? $history;
+
+        if (!is_array($payload)) {
+            $payload = ['value' => $payload];
+        }
 
         $this->connection->table('workflow_histories')->insert([
             'instance_id' => (string) $history['instance_id'],
@@ -171,7 +176,7 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
             'from_state' => (string) $history['from_state'],
             'to_state' => (string) $history['to_state'],
             'actor' => $history['actor'] ?? null,
-            'payload' => json_encode($history, JSON_THROW_ON_ERROR),
+            'payload' => json_encode($payload, JSON_THROW_ON_ERROR),
             'created_at' => $history['created_at'] ?? $timestamp,
             'updated_at' => $history['created_at'] ?? $timestamp,
         ]);

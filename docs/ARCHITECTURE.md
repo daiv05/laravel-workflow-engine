@@ -9,6 +9,7 @@ The package is organized by explicit layers with strict responsibilities:
 - Policies: transition authorization.
 - Fields: dynamic visibility/editability decisions.
 - Engine: orchestration of workflow lifecycle and transition execution.
+- DataMapping: mapping input payloads into instance snapshot and external handlers.
 - Functions: controlled function registration and lookup.
 - Events: event queueing and post-commit dispatch.
 - Storage: persistence for definitions, instances, history, and outbox.
@@ -19,10 +20,20 @@ The package is organized by explicit layers with strict responsibilities:
 2. Resolve transition from current state + action.
 3. Evaluate authorization/rules.
 4. Execute transactional update:
+- validate mapping context contract when transition has `mappings`,
+- apply `DataMapper` to `context.data`,
 - state/version mutation,
 - history append,
 - event queueing (and outbox insert for DB mode).
 5. After successful commit, flush event dispatch.
+
+## Mapping Read Path
+
+- Write path: transition execution applies `mappings` through `DataMapper`.
+- Read path: engine resolves mapped fields through `resolveMappedData(instanceId, action)`.
+- `attribute`: returned from `workflow_instances.data`.
+- `attach` and `relation`: resolved through binding query handlers when configured.
+- `custom`: resolved by custom handlers implementing query contract.
 
 ## Data Consistency Model
 
@@ -72,3 +83,4 @@ Invalidation:
 - Definition activation and lookup are scoped by workflow + tenant.
 - Cache keys include tenant dimension.
 - Active scope uniqueness prevents cross-tenant active definition conflicts.
+- Engine operations are forced into `workflow.default_tenant_id` scope.

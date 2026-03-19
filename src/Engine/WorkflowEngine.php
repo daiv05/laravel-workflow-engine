@@ -4,11 +4,13 @@ declare(strict_types=1);
 
 namespace Daiv05\LaravelWorkflowEngine\Engine;
 
+use Daiv05\LaravelWorkflowEngine\Contracts\DataMapperInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\StorageRepositoryInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\WorkflowEngineInterface;
 use Daiv05\LaravelWorkflowEngine\DSL\Compiler;
 use Daiv05\LaravelWorkflowEngine\DSL\Parser;
 use Daiv05\LaravelWorkflowEngine\DSL\Validator;
+use Daiv05\LaravelWorkflowEngine\Exceptions\MappingException;
 use Daiv05\LaravelWorkflowEngine\Fields\FieldEngine;
 use Daiv05\LaravelWorkflowEngine\Functions\FunctionRegistry;
 use Daiv05\LaravelWorkflowEngine\Policies\PolicyEngine;
@@ -34,7 +36,9 @@ class WorkflowEngine implements WorkflowEngineInterface
         private readonly FunctionRegistry $functions,
         private readonly ?CacheRepository $cache = null,
         private readonly bool $cacheEnabled = true,
-        private readonly int $cacheTtl = 300
+        private readonly int $cacheTtl = 300,
+        private readonly ?DataMapperInterface $dataMapper = null,
+        private readonly string $defaultTenantId = 'tenant-default'
     ) {
     }
 
@@ -45,7 +49,7 @@ class WorkflowEngine implements WorkflowEngineInterface
      */
     public function start(string $workflowName, array $options = []): array
     {
-        $tenantId = isset($options['tenant_id']) && is_string($options['tenant_id']) ? $options['tenant_id'] : null;
+        $tenantId = $this->resolveTenantId();
         $definition = $this->getActiveDefinitionCached($workflowName, $tenantId);
 
         $instance = [
@@ -195,10 +199,105 @@ class WorkflowEngine implements WorkflowEngineInterface
     }
 
     /**
+     * Resolve related mapped data for the transition available from current state and action.
+     *
+     * @param array<string, mixed> $context
+     * @param array<string, mixed> $options
+     *
+     * @return array<string, mixed>
+     */
+    public function resolveMappedData(string $instanceId, string $action, array $context = [], array $options = []): array
+    {
+        $instance = $this->storage->getInstance($instanceId);
+        $definition = $this->getDefinitionByIdCached((int) $instance['workflow_definition_id']);
+        $transition = $this->resolveTransitionForRead($instanceId, $definition, (string) $instance['state'], $action);
+
+        if ($transition === null || !isset($transition['mappings']) || !is_array($transition['mappings'])) {
+            return [];
+        }
+
+        if ($this->dataMapper === null) {
+            throw MappingException::mapperNotConfigured();
+        }
+
+        return $this->dataMapper->resolve(
+            $transition['mappings'],
+            is_array($instance['data'] ?? null) ? $instance['data'] : [],
+            [
+                'instance' => $instance,
+                'transition' => $transition,
+                'definition' => $definition,
+                'runtime_context' => $context,
+                'action' => $action,
+            ],
+            $options
+        );
+    }
+
+    /**
+     * Resolve transition for read operations.
+     *
+     * Priority:
+     * 1) transition from current state + action
+     * 2) latest history entry for action -> transition_id
+     * 3) unique transition by action across definition
+     *
+     * @param array<string, mixed> $definition
+     *
+     * @return array<string, mixed>|null
+     */
+    private function resolveTransitionForRead(string $instanceId, array $definition, string $currentState, string $action): ?array
+    {
+        $current = $this->stateMachine->transitionFor($definition, $currentState, $action);
+        if (is_array($current)) {
+            return $current;
+        }
+
+        $history = $this->storage->getHistory($instanceId);
+        for ($index = count($history) - 1; $index >= 0; $index--) {
+            $entry = $history[$index] ?? null;
+            if (!is_array($entry) || ($entry['action'] ?? null) !== $action) {
+                continue;
+            }
+
+            $transitionId = $entry['transition_id'] ?? null;
+            if (!is_string($transitionId) || $transitionId === '') {
+                continue;
+            }
+
+            foreach (($definition['transitions'] ?? []) as $transition) {
+                if (!is_array($transition)) {
+                    continue;
+                }
+
+                if (($transition['transition_id'] ?? null) === $transitionId) {
+                    return $transition;
+                }
+            }
+        }
+
+        $candidates = [];
+
+        foreach (($definition['transitions'] ?? []) as $transition) {
+            if (!is_array($transition)) {
+                continue;
+            }
+
+            if (($transition['action'] ?? null) === $action) {
+                $candidates[] = $transition;
+            }
+        }
+
+        return count($candidates) === 1 ? $candidates[0] : null;
+    }
+
+    /**
      * @param array<string, mixed> $definition
      */
     public function activateDefinition(string $workflowName, array|string $definition, ?string $tenantId = null): int
     {
+        $tenantId = $this->resolveTenantId();
+
         $parsed = $this->parser->parse($definition);
         $this->validator->validate($parsed);
         $compiled = $this->compiler->compile($parsed);
@@ -322,6 +421,11 @@ class WorkflowEngine implements WorkflowEngineInterface
     private function definitionCacheKey(int $definitionId): string
     {
         return 'workflow_definition_id::' . $definitionId;
+    }
+
+    private function resolveTenantId(): string
+    {
+        return $this->defaultTenantId;
     }
 
     private function getCacheValue(string $key): mixed

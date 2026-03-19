@@ -5,6 +5,8 @@ declare(strict_types=1);
 return [
     'default_driver' => 'memory',
 
+    'default_tenant_id' => 'tenant-default',
+
     'storage' => [
         'definitions_table' => 'workflow_definitions',
         'instances_table' => 'workflow_instances',
@@ -26,6 +28,17 @@ return [
     'events' => [
         'prefix' => 'workflow.event.',
         'fail_silently' => false,
+    ],
+
+    'mappings' => [
+        'fail_silently' => false,
+    ],
+
+    'bindings' => [
+        // 'documents' => [
+        //     'handler' => App\Workflow\Mappers\DocumentMapper::class,
+        //     'query_handler' => App\Workflow\Mappers\DocumentMapper::class,
+        // ],
     ],
 
     'diagnostics' => [

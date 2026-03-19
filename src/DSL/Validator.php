@@ -56,6 +56,7 @@ class Validator
             $this->validateTransition($transition, $definition['states'], $path);
             $this->validateRuleFunctions($transition['allowed_if'] ?? [], $path . '.allowed_if');
             $this->validateFieldRules($transition, $path);
+            $this->validateMappings($transition, $path);
 
             $uniqueKey = $transition['from'] . '::' . $transition['action'];
             if (isset($uniqueTransitionPerState[$uniqueKey])) {
@@ -138,6 +139,47 @@ class Validator
 
         if (isset($fields['editable_if'])) {
             $this->validateRuleFunctions($fields['editable_if'], $path . '.fields.editable_if');
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $transition
+     */
+    private function validateMappings(array $transition, string $path): void
+    {
+        if (!array_key_exists('mappings', $transition)) {
+            return;
+        }
+
+        if (!is_array($transition['mappings'])) {
+            throw DSLValidationException::withPath('mappings must be an object-like array', $path . '.mappings');
+        }
+
+        $allowedTypes = ['attribute', 'attach', 'relation', 'custom'];
+
+        foreach ($transition['mappings'] as $field => $mapping) {
+            $fieldPath = $path . '.mappings.' . (string) $field;
+
+            if (!is_string($field) || $field === '') {
+                throw DSLValidationException::withPath('mapping field key must be a non-empty string', $fieldPath);
+            }
+
+            if (!is_array($mapping)) {
+                throw DSLValidationException::withPath('mapping definition must be an array', $fieldPath);
+            }
+
+            $type = $mapping['type'] ?? 'attribute';
+            if (!is_string($type) || !in_array($type, $allowedTypes, true)) {
+                throw DSLValidationException::withPath('mapping type must be one of: attribute, attach, relation, custom', $fieldPath . '.type');
+            }
+
+            if (($type === 'attach' || $type === 'relation') && (!isset($mapping['target']) || !is_string($mapping['target']) || $mapping['target'] === '')) {
+                throw DSLValidationException::withPath('mapping target is required for attach/relation', $fieldPath . '.target');
+            }
+
+            if ($type === 'custom' && (!isset($mapping['handler']) || !is_string($mapping['handler']) || $mapping['handler'] === '')) {
+                throw DSLValidationException::withPath('mapping handler is required for custom type', $fieldPath . '.handler');
+            }
         }
     }
 }

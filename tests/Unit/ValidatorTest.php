@@ -146,4 +146,58 @@ class ValidatorTest extends TestCase
             ],
         ]);
     }
+
+    public function test_it_fails_when_mapping_type_is_invalid(): void
+    {
+        $this->expectException(DSLValidationException::class);
+
+        $validator = new Validator(new FunctionRegistry());
+        $validator->validate([
+            'dsl_version' => 2,
+            'name' => 'termination_request',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved'],
+            'states' => ['draft', 'approved'],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'approved',
+                    'action' => 'approve',
+                    'transition_id' => 'tr_approve',
+                    'allowed_if' => [],
+                    'mappings' => [
+                        'comment' => ['type' => 'unknown'],
+                    ],
+                ],
+            ],
+        ]);
+    }
+
+    public function test_it_fails_when_relation_mapping_has_no_target(): void
+    {
+        $this->expectException(DSLValidationException::class);
+
+        $validator = new Validator(new FunctionRegistry());
+        $validator->validate([
+            'dsl_version' => 2,
+            'name' => 'termination_request',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved'],
+            'states' => ['draft', 'approved'],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'approved',
+                    'action' => 'approve',
+                    'transition_id' => 'tr_approve',
+                    'allowed_if' => [],
+                    'mappings' => [
+                        'documents' => ['type' => 'relation'],
+                    ],
+                ],
+            ],
+        ]);
+    }
 }

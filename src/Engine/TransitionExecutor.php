@@ -4,10 +4,13 @@ declare(strict_types=1);
 
 namespace Daiv05\LaravelWorkflowEngine\Engine;
 
+use Daiv05\LaravelWorkflowEngine\Contracts\DataMapperInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\DiagnosticsEmitterInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\EventDispatcherInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\StorageRepositoryInterface;
+use Daiv05\LaravelWorkflowEngine\Exceptions\ContextValidationException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\InvalidTransitionException;
+use Daiv05\LaravelWorkflowEngine\Exceptions\MappingException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\UnauthorizedTransitionException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\WorkflowException;
 use Daiv05\LaravelWorkflowEngine\Policies\PolicyEngine;
@@ -20,7 +23,8 @@ class TransitionExecutor
         private readonly StorageRepositoryInterface $storage,
         private readonly EventDispatcherInterface $events,
         private readonly ?DiagnosticsEmitterInterface $diagnostics = null,
-        private readonly bool $listenerFailSilently = false
+        private readonly bool $listenerFailSilently = false,
+        private readonly ?DataMapperInterface $dataMapper = null
     ) {
     }
 
@@ -59,6 +63,7 @@ class TransitionExecutor
             /** @var array<string, mixed> $updated */
             $updated = $this->storage->transaction(function () use ($instance, $definition, $action, $context, &$emittedEvents): array {
                 $transition = $this->stateMachine->transitionFor($definition, (string) $instance['state'], $action);
+                $mappingSummary = [];
 
                 if ($transition === null) {
                     throw InvalidTransitionException::forStateAndAction((string) $instance['state'], $action);
@@ -71,6 +76,12 @@ class TransitionExecutor
                 $fromState = (string) $instance['state'];
                 $newState = (string) $transition['to'];
                 $expectedVersion = (int) ($instance['version'] ?? 0);
+
+                if (isset($transition['mappings']) && is_array($transition['mappings']) && $transition['mappings'] !== []) {
+                    $mapping = $this->applyMappings($transition, $instance, $definition, $action, $context);
+                    $instance['data'] = $mapping['instance_data'];
+                    $mappingSummary = $mapping['summary'];
+                }
 
                 $instance['state'] = $newState;
                 $instance['version'] = $expectedVersion + 1;
@@ -85,6 +96,14 @@ class TransitionExecutor
                     'from_state' => $fromState,
                     'to_state' => $newState,
                     'actor' => $context['actor'] ?? null,
+                    'payload' => [
+                        'transition_id' => $transition['transition_id'],
+                        'action' => $action,
+                        'from_state' => $fromState,
+                        'to_state' => $newState,
+                        'mapping_summary' => $mappingSummary,
+                        'context' => $this->historyContextSummary($context),
+                    ],
                     'created_at' => date(DATE_ATOM),
                 ]);
 
@@ -234,5 +253,68 @@ class TransitionExecutor
             'exception_message' => $exception->getMessage(),
             'context' => [],
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $transition
+     * @param array<string, mixed> $instance
+     * @param array<string, mixed> $definition
+     * @param array<string, mixed> $context
+     *
+     * @return array{instance_data: array<string, mixed>, summary: array<string, mixed>}
+     */
+    private function applyMappings(array $transition, array $instance, array $definition, string $action, array $context): array
+    {
+        if (!array_key_exists('data', $context)) {
+            throw ContextValidationException::missingKey('data', 'transition mappings');
+        }
+
+        if (!is_array($context['data'])) {
+            throw ContextValidationException::invalidType('data', 'an array');
+        }
+
+        if ($this->dataMapper === null) {
+            throw MappingException::mapperNotConfigured();
+        }
+
+        return $this->dataMapper->map(
+            (array) $transition['mappings'],
+            is_array($instance['data'] ?? null) ? $instance['data'] : [],
+            $context['data'],
+            [
+                'instance' => $instance,
+                'transition' => $transition,
+                'definition' => $definition,
+                'runtime_context' => $context,
+                'action' => $action,
+            ]
+        );
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     *
+     * @return array<string, mixed>
+     */
+    private function historyContextSummary(array $context): array
+    {
+        $summary = [
+            'has_data' => array_key_exists('data', $context),
+            'data_keys' => is_array($context['data'] ?? null) ? array_values(array_filter(array_keys($context['data']), 'is_string')) : [],
+        ];
+
+        if (isset($context['roles']) && is_array($context['roles'])) {
+            $summary['roles'] = array_values($context['roles']);
+        }
+
+        if (isset($context['actor']) && is_scalar($context['actor'])) {
+            $summary['actor'] = (string) $context['actor'];
+        }
+
+        if (isset($context['meta']) && is_array($context['meta'])) {
+            $summary['meta_keys'] = array_values(array_filter(array_keys($context['meta']), 'is_string'));
+        }
+
+        return $summary;
     }
 }

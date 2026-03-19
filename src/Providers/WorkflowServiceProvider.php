@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Daiv05\LaravelWorkflowEngine\Providers;
 
+use Daiv05\LaravelWorkflowEngine\Contracts\DataMapperInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\DiagnosticsEmitterInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\EventDispatcherInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\FunctionRegistryInterface;
@@ -13,6 +14,7 @@ use Daiv05\LaravelWorkflowEngine\Contracts\StorageRepositoryInterface;
 use Daiv05\LaravelWorkflowEngine\DSL\Compiler;
 use Daiv05\LaravelWorkflowEngine\DSL\Parser;
 use Daiv05\LaravelWorkflowEngine\DSL\Validator;
+use Daiv05\LaravelWorkflowEngine\DataMapping\DataMapper;
 use Daiv05\LaravelWorkflowEngine\Engine\StateMachine;
 use Daiv05\LaravelWorkflowEngine\Engine\TransitionExecutor;
 use Daiv05\LaravelWorkflowEngine\Engine\WorkflowEngine;
@@ -53,6 +55,12 @@ class WorkflowServiceProvider extends ServiceProvider
         $this->app->singleton(PolicyEngine::class, fn ($app) => new PolicyEngine($app->make(RuleEngineInterface::class)));
         $this->app->singleton(FieldEngine::class, fn ($app) => new FieldEngine($app->make(RuleEngineInterface::class)));
         $this->app->singleton(StateMachine::class, static fn () => new StateMachine());
+
+        $this->app->singleton(DataMapper::class, fn ($app) => new DataMapper(
+            (array) $app['config']->get('workflow.bindings', []),
+            (bool) $app['config']->get('workflow.mappings.fail_silently', false)
+        ));
+        $this->app->alias(DataMapper::class, DataMapperInterface::class);
 
         $this->app->singleton(DatabaseOutboxStore::class, fn ($app) => new DatabaseOutboxStore(
             $app->make(ConnectionInterface::class),
@@ -116,23 +124,34 @@ class WorkflowServiceProvider extends ServiceProvider
             $app->make(StorageRepositoryInterface::class),
             $app->make(EventDispatcherInterface::class),
             $app->make(DiagnosticsEmitterInterface::class),
-            (bool) $app['config']->get('workflow.events.fail_silently', false)
+            (bool) $app['config']->get('workflow.events.fail_silently', false),
+            $app->make(DataMapperInterface::class)
         ));
 
-        $this->app->singleton(WorkflowEngine::class, fn ($app) => new WorkflowEngine(
-            $app->make(StorageRepositoryInterface::class),
-            $app->make(Parser::class),
-            $app->make(Validator::class),
-            $app->make(Compiler::class),
-            $app->make(StateMachine::class),
-            $app->make(TransitionExecutor::class),
-            $app->make(FieldEngine::class),
-            $app->make(PolicyEngine::class),
-            $app->make(FunctionRegistry::class),
-            $app->bound('cache.store') ? $app->make(CacheRepository::class) : null,
-            (bool) $app['config']->get('workflow.cache.enabled', true),
-            (int) $app['config']->get('workflow.cache.ttl', 300)
-        ));
+        $this->app->singleton(WorkflowEngine::class, function ($app): WorkflowEngine {
+            $defaultTenantId = $app['config']->get('workflow.default_tenant_id');
+
+            if (!is_string($defaultTenantId) || trim($defaultTenantId) === '') {
+                throw new \InvalidArgumentException('workflow.default_tenant_id is required and must be a non-empty string.');
+            }
+
+            return new WorkflowEngine(
+                $app->make(StorageRepositoryInterface::class),
+                $app->make(Parser::class),
+                $app->make(Validator::class),
+                $app->make(Compiler::class),
+                $app->make(StateMachine::class),
+                $app->make(TransitionExecutor::class),
+                $app->make(FieldEngine::class),
+                $app->make(PolicyEngine::class),
+                $app->make(FunctionRegistry::class),
+                $app->bound('cache.store') ? $app->make(CacheRepository::class) : null,
+                (bool) $app['config']->get('workflow.cache.enabled', true),
+                (int) $app['config']->get('workflow.cache.ttl', 300),
+                $app->make(DataMapperInterface::class),
+                $defaultTenantId
+            );
+        });
 
         $this->app->singleton('workflow', fn ($app) => $app->make(WorkflowEngine::class));
     }

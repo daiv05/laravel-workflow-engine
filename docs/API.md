@@ -35,6 +35,11 @@ start(string $workflowName, array $options = []): array
 - tenant_id: tenant scope for active definition lookup.
 - data: arbitrary payload to initialize instance data.
 
+Runtime tenant scope is forced by `workflow.default_tenant_id`.
+Incoming `tenant_id` values are ignored.
+
+`workflow.default_tenant_id` is mandatory package configuration.
+
 ### Behavior
 
 - Resolves active definition for workflow + tenant.
@@ -73,12 +78,32 @@ execute(string $instanceId, string $action, array $context = []): array
 ### Behavior
 
 - Runs in storage transaction.
+- Applies transition `mappings` when configured.
+- Requires `context.data` as array when mappings exist.
 - Updates state and optimistic-lock version.
 - Appends history entry.
 - Queues events inside transaction.
 - Flushes event dispatch after successful commit.
 - Clears queued events on failure.
 - Rejects transitions from final states with `InvalidTransitionException`.
+
+## resolveMappedData
+
+Resolves read models for mapped fields (including related records via binding query handlers) for a transition from the current instance state.
+
+### Signature
+
+```php
+resolveMappedData(string $instanceId, string $action, array $context = [], array $options = []): array
+```
+
+### Behavior
+
+- Reads instance snapshot from storage.
+- Resolves transition mappings by `(current_state, action)`.
+- Returns `attribute` fields from instance data.
+- Resolves `attach` and `relation` through configured binding `query_handler` when available.
+- Resolves `custom` via mapping handler/query handler when it implements read contract.
 
 ## execution
 
@@ -186,6 +211,10 @@ history(string $instanceId): array
 For role-based rules, context must include:
 
 - roles: array of role strings.
+
+For transitions with mappings, context must include:
+
+- data: array input payload for mapped fields.
 
 If missing or invalid, evaluation throws context validation errors in strict evaluation paths.
 

@@ -32,6 +32,24 @@ Optional:
 - allowed_if
 - fields
 - effects
+- mappings
+
+### mappings structure
+
+`mappings` is an object-like map keyed by input field name.
+
+Supported types:
+
+- attribute
+- attach
+- relation
+- custom
+
+Rules:
+
+- `type` defaults to `attribute` when omitted.
+- `attach` and `relation` require `target`.
+- `custom` requires `handler`.
 
 ### effects structure
 
@@ -62,6 +80,9 @@ Optional per effect:
 - Duplicate `(from, action)` transitions are rejected.
 - Referenced function names in `fn` must exist in function registry.
 - This `fn` validation applies to `allowed_if`, `fields.visible_if`, and `fields.editable_if`.
+- `mappings` must be an array object keyed by field name.
+- Mapping type must be one of `attribute`, `attach`, `relation`, `custom`.
+- Mapping-specific required keys (`target`, `handler`) are validated.
 
 ## Error Style
 
@@ -94,6 +115,18 @@ transitions:
     transition_id: tr_approve
     allowed_if:
       role: HR
+    mappings:
+      comment:
+        type: attribute
+      documents:
+        type: relation
+        target: documents
+      document_ids:
+        type: attach
+        target: documents
+      checksum:
+        type: custom
+        handler: App\Workflow\Mappers\ChecksumMapper
     effects:
       - event: request_approved
         meta:

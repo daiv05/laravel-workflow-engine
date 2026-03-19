@@ -138,6 +138,15 @@ class InMemoryWorkflowRepository implements StorageRepositoryInterface
 
     public function appendHistory(array $history): void
     {
+        if (!array_key_exists('payload', $history)) {
+            $history['payload'] = [
+                'transition_id' => $history['transition_id'] ?? '',
+                'action' => $history['action'] ?? '',
+                'from_state' => $history['from_state'] ?? '',
+                'to_state' => $history['to_state'] ?? '',
+            ];
+        }
+
         $this->history[] = $history;
     }
 
