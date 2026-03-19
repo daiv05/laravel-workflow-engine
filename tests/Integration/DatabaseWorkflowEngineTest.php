@@ -201,7 +201,7 @@ class DatabaseWorkflowEngineTest extends TestCase
         $this->assertCount(0, $dispatcher->dispatchedEvents());
     }
 
-    public function test_database_engine_isolates_active_definitions_per_tenant(): void
+    public function test_database_engine_uses_static_tenant_scope_and_rejects_duplicate_version(): void
     {
         $functions = new FunctionRegistry();
         $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
@@ -226,6 +226,10 @@ class DatabaseWorkflowEngineTest extends TestCase
             ],
         ], 'tenant-a');
 
+        $this->expectException(WorkflowException::class);
+        $this->expectExceptionMessage('Workflow definition version is immutable and already exists for scope');
+
+        // With static tenant mode, tenant input is ignored and both activations share one scope.
         $engine->activateDefinition('onboarding', [
             'dsl_version' => 2,
             'name' => 'onboarding',
@@ -243,15 +247,6 @@ class DatabaseWorkflowEngineTest extends TestCase
                 ],
             ],
         ], 'tenant-b');
-
-        $instanceA = $engine->start('onboarding', ['tenant_id' => 'tenant-a']);
-        $instanceB = $engine->start('onboarding', ['tenant_id' => 'tenant-b']);
-
-        $this->assertSame('tenant_a_start', $instanceA['state']);
-        $this->assertSame('tenant_a_start', $storage->getDefinitionById((int) $instanceA['workflow_definition_id'])['initial_state']);
-
-        $this->assertSame('tenant_b_start', $instanceB['state']);
-        $this->assertSame('tenant_b_start', $storage->getDefinitionById((int) $instanceB['workflow_definition_id'])['initial_state']);
     }
 
     public function test_existing_instance_keeps_original_workflow_definition_id_after_new_version_activation(): void
