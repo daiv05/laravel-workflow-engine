@@ -141,12 +141,22 @@ execution(?string $instanceId = null): ExecutionBuilder
 - `before()` hooks run before transition execution.
 - `after()` hooks run after successful transition execution and event flush.
 - Inline listeners are executed before global Laravel event listeners.
-- Event payload includes transition metadata:
+- Workflow start emits `workflow.event.instance_started` with payload keys:
 	- `instance_id`
+	- `workflow_name`
+	- `state`
+	- `subject` (optional)
+	- `tenant_id` (optional)
+- Transition effect event payload includes transition metadata:
+	- `instance_id`
+	- `from_state`
+	- `to_state`
 	- `action`
 	- `transition_id`
 	- `context` (execution context passed to `execute`)
 	- `meta` (optional, from transition effect definition)
+	- `subject` (optional)
+	- `tenant_id` (optional)
 
 ### Example
 

@@ -152,6 +152,7 @@ class WorkflowServiceProvider extends ServiceProvider
                 $app->make(FieldEngine::class),
                 $app->make(PolicyEngine::class),
                 $app->make(FunctionRegistry::class),
+                $app->make(EventDispatcherInterface::class),
                 $app->bound('cache.store') ? $app->make(CacheRepository::class) : null,
                 (bool) $app['config']->get('workflow.cache.enabled', true),
                 (int) $app['config']->get('workflow.cache.ttl', 300),

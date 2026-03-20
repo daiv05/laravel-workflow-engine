@@ -242,27 +242,25 @@ class UpdateSubjectProjectionListener
 {
     public function handle(object $event): void
     {
-        // Extract from workflow event
-        $instanceId = $event->payload['instance_id'] ?? null;
-        $instance = DB::table('workflow_instances')
-            ->where('instance_id', $instanceId)
-            ->first();
+        $subject = is_array($event->payload['subject'] ?? null)
+            ? $event->payload['subject']
+            : null;
 
-        if (!$instance) {
+        if ($subject === null) {
             return;
         }
 
         DB::table('subject_workflow_projection')
             ->updateOrCreate(
                 [
-                    'tenant_id' => $instance->tenant_id,
-                    'subject_type' => $instance->subject_type,
-                    'subject_id' => $instance->subject_id,
-                    'workflow_name' => $this->resolveWorkflowName($instance->workflow_definition_id),
+                    'tenant_id' => $event->payload['tenant_id'] ?? null,
+                    'subject_type' => $subject['subject_type'],
+                    'subject_id' => $subject['subject_id'],
+                    'workflow_name' => $this->resolveWorkflowNameFromEvent($event),
                 ],
                 [
-                    'latest_instance_id' => $instance->instance_id,
-                    'latest_state' => $instance->state,
+                    'latest_instance_id' => $event->payload['instance_id'] ?? null,
+                    'latest_state' => $event->payload['to_state'] ?? ($event->payload['state'] ?? null),
                     'latest_action' => $event->payload['action'] ?? null,
                     'latest_transition_at' => now(),
                     'latest_context' => json_encode($event->payload['context'] ?? []),
@@ -270,16 +268,9 @@ class UpdateSubjectProjectionListener
             );
     }
 
-    private function resolveWorkflowName(int $definitionId): string
+    private function resolveWorkflowNameFromEvent(object $event): string
     {
-        // Cache this lookup
-        return cache()->remember(
-            "workflow_name_{$definitionId}",
-            3600,
-            fn () => DB::table('workflow_definitions')
-                ->where('id', $definitionId)
-                ->value('workflow_name')
-        );
+        return (string) ($event->payload['workflow_name'] ?? 'unknown_workflow');
     }
 }
 ```
@@ -399,7 +390,45 @@ try {
 }
 ```
 
-## 6. Security Considerations
+## 7. Subject in Event Payloads
+
+When a workflow instance has subject association, events include a normalized `subject` block:
+
+```php
+[
+    'subject' => [
+        'subject_type' => App\Models\Solicitud::class,
+        'subject_id' => '123',
+    ],
+]
+```
+
+This is available on:
+
+- `workflow.event.instance_started`
+- Transition effect events configured in DSL (`effects.event`)
+- `workflow.event.transition_failed`
+
+Example listener:
+
+```php
+public function handle(object $event): void
+{
+    $subject = $event->payload['subject'] ?? null;
+
+    if (!is_array($subject)) {
+        return;
+    }
+
+    // Use subject directly; no extra instance lookup is required.
+    DomainNotifier::notify(
+        model: $subject['subject_type'],
+        id: $subject['subject_id']
+    );
+}
+```
+
+## 8. Security Considerations
 
 **Do this:**
 
@@ -412,7 +441,7 @@ try {
 - Pass user input directly as subject_type.
 - Allow engine to hydrate arbitrary models by class name.
 
-## 7. Testing Subject Association
+## 9. Testing Subject Association
 
 ### Unit: Normalization
 
@@ -452,7 +481,7 @@ $foundBySubject = $repository->getLatestInstanceForSubject(
 $this->assertSame($instance['instance_id'], $foundBySubject['instance_id']);
 ```
 
-## 8. Common Questions
+## 10. Common Questions
 
 **Q: Do I have to use subject association?**
 

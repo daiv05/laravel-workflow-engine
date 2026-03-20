@@ -12,6 +12,7 @@ use Daiv05\LaravelWorkflowEngine\Engine\StateMachine;
 use Daiv05\LaravelWorkflowEngine\Engine\TransitionExecutor;
 use Daiv05\LaravelWorkflowEngine\Engine\WorkflowEngine;
 use Daiv05\LaravelWorkflowEngine\Events\Dispatcher;
+use Daiv05\LaravelWorkflowEngine\Events\WorkflowEvent;
 use Daiv05\LaravelWorkflowEngine\Exceptions\InvalidTransitionException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\WorkflowException;
 use Daiv05\LaravelWorkflowEngine\Fields\FieldEngine;
@@ -149,8 +150,9 @@ class DatabaseWorkflowEngineTest extends TestCase
         $this->assertCount(2, $histories);
 
         $events = $dispatcher->dispatchedEvents();
-        $this->assertCount(1, $events);
-        $this->assertSame('workflow.event.request_approved', $events[0]['name']);
+        $this->assertCount(2, $events);
+        $eventNames = array_map(static fn ($event): string => $event->fullEventName('workflow.event.'), $events);
+        $this->assertSame(['workflow.event.instance_started', 'workflow.event.request_approved'], $eventNames);
     }
 
     public function test_database_engine_rolls_back_and_does_not_dispatch_when_queue_fails(): void
@@ -203,7 +205,14 @@ class DatabaseWorkflowEngineTest extends TestCase
         $persisted = $storage->getInstance($instance['instance_id']);
         $this->assertSame($afterSubmit['state'], $persisted['state']);
         $this->assertSame($afterSubmit['version'], $persisted['version']);
-        $this->assertCount(0, $dispatcher->dispatchedEvents());
+
+        $dispatchedNames = array_map(
+            static fn ($event): string => $event->fullEventName('workflow.event.'),
+            $dispatcher->dispatchedEvents()
+        );
+
+        $this->assertSame(['workflow.event.instance_started', 'workflow.event.transition_failed'], $dispatchedNames);
+        $this->assertNotContains('workflow.event.request_approved', $dispatchedNames);
     }
 
     public function test_database_engine_uses_static_tenant_scope_and_rejects_duplicate_version(): void
@@ -354,10 +363,14 @@ class DatabaseWorkflowEngineTest extends TestCase
 
         $outboxRows = $connection->table('workflow_outbox')->get();
 
-        $this->assertCount(1, $outboxRows);
-        $this->assertSame('workflow.event.request_approved', $outboxRows[0]->event_name);
-        $this->assertSame('dispatched', $outboxRows[0]->status);
-        $this->assertNotNull($outboxRows[0]->dispatched_at);
+        $this->assertCount(2, $outboxRows);
+        $eventNames = [];
+        foreach ($outboxRows as $row) {
+            $eventNames[] = (string) $row->event_name;
+        }
+        $this->assertSame(['workflow.event.instance_started', 'workflow.event.request_approved'], $eventNames);
+        $this->assertSame('dispatched', $outboxRows[1]->status);
+        $this->assertNotNull($outboxRows[1]->dispatched_at);
     }
 
     public function test_database_engine_includes_effect_meta_and_context_in_outbox_payload(): void
@@ -403,9 +416,12 @@ class DatabaseWorkflowEngineTest extends TestCase
         $engine->execute($instance['instance_id'], 'finish', $context);
 
         $outboxRows = $connection->table('workflow_outbox')->get();
-        $this->assertCount(1, $outboxRows);
+        $this->assertCount(2, $outboxRows);
 
-        $payload = json_decode((string) $outboxRows[0]->payload, true, 512, JSON_THROW_ON_ERROR);
+        $this->assertSame('workflow.event.instance_started', (string) $outboxRows[0]->event_name);
+        $this->assertSame('workflow.event.finished', (string) $outboxRows[1]->event_name);
+
+        $payload = json_decode((string) $outboxRows[1]->payload, true, 512, JSON_THROW_ON_ERROR);
         $this->assertSame($context, $payload['context']);
         $this->assertSame('analytics', $payload['meta']['bus']);
         $this->assertSame(true, $payload['meta']['flags']['replayable']);
@@ -532,16 +548,20 @@ class DatabaseWorkflowEngineTest extends TestCase
             $executor,
             $fields,
             $policy,
-            $functions
+            $functions,
+            $dispatcher
         );
     }
 }
 
 class FailingQueueDispatcher extends Dispatcher
 {
-    public function queue(string $eventName, array $payload = []): void
+    public function queue(WorkflowEvent $event): void
     {
-        parent::queue($eventName, $payload);
-        throw new WorkflowException('queue failed before commit');
+        parent::queue($event);
+
+        if ($event->fullEventName('workflow.event.') === 'workflow.event.request_approved') {
+            throw new WorkflowException('queue failed before commit');
+        }
     }
 }

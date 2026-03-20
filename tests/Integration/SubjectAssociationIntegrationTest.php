@@ -694,6 +694,7 @@ class SubjectAssociationIntegrationTest extends TestCase
             $fields,
             $policy,
             $functions,
+            $dispatcher,
             null,
             true,
             300,

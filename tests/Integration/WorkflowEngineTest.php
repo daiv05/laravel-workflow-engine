@@ -47,7 +47,8 @@ class WorkflowEngineTest extends TestCase
             $executor,
             $fields,
             $policy,
-            $functions
+            $functions,
+            $events
         );
 
         $engine->activateDefinition('termination_request', [
@@ -124,7 +125,8 @@ class WorkflowEngineTest extends TestCase
             $executor,
             $fields,
             $policy,
-            $functions
+            $functions,
+            $events
         );
 
         $engine->activateDefinition('closure_flow', [
@@ -191,7 +193,8 @@ class WorkflowEngineTest extends TestCase
             $executor,
             $fields,
             $policy,
-            $functions
+            $functions,
+            $events
         );
 
         $engine->activateDefinition('termination_request', [
@@ -262,7 +265,8 @@ class WorkflowEngineTest extends TestCase
             $executor,
             $fields,
             $policy,
-            $functions
+            $functions,
+            $events
         );
 
         $engine->activateDefinition('diagnostic_flow', [
@@ -324,7 +328,8 @@ class WorkflowEngineTest extends TestCase
             $executor,
             $fields,
             $policy,
-            $functions
+            $functions,
+            $events
         );
 
         $engine->activateDefinition('termination_request', [
@@ -411,7 +416,8 @@ class WorkflowEngineTest extends TestCase
             $executor,
             $fields,
             $policy,
-            $functions
+            $functions,
+            $events
         );
 
         $engine->activateDefinition('simple_flow', [
@@ -444,8 +450,9 @@ class WorkflowEngineTest extends TestCase
             ->execute('finish');
 
         $this->assertSame('done', $result['state']);
-        $this->assertCount(1, $events->dispatchedEvents());
-        $this->assertSame('workflow.event.finished', $events->dispatchedEvents()[0]['name']);
+        $this->assertCount(2, $events->dispatchedEvents());
+        $eventNames = array_map(static fn ($event): string => $event->fullEventName('workflow.event.'), $events->dispatchedEvents());
+        $this->assertSame(['workflow.event.instance_started', 'workflow.event.finished'], $eventNames);
     }
 
     public function test_inline_listener_exception_bubbles_by_default(): void
@@ -472,7 +479,8 @@ class WorkflowEngineTest extends TestCase
             $executor,
             $fields,
             $policy,
-            $functions
+            $functions,
+            $events
         );
 
         $engine->activateDefinition('simple_flow', [
@@ -532,7 +540,8 @@ class WorkflowEngineTest extends TestCase
             $executor,
             $fields,
             $policy,
-            $functions
+            $functions,
+            $events
         );
 
         $engine->activateDefinition('meta_flow', [
@@ -587,10 +596,11 @@ class WorkflowEngineTest extends TestCase
         $this->assertSame(['workflow', 'sync'], $capturedInlinePayload['meta']['tags']);
 
         $dispatched = $events->dispatchedEvents();
-        $this->assertCount(1, $dispatched);
-        $this->assertSame('workflow.event.finished', $dispatched[0]['name']);
-        $this->assertSame($context, $dispatched[0]['payload']['context']);
-        $this->assertSame('audit', $dispatched[0]['payload']['meta']['integration']['stream']);
+        $this->assertCount(2, $dispatched);
+        $this->assertSame('workflow.event.instance_started', $dispatched[0]->fullEventName('workflow.event.'));
+        $this->assertSame('workflow.event.finished', $dispatched[1]->fullEventName('workflow.event.'));
+        $this->assertSame($context, $dispatched[1]->toPayload()['context']);
+        $this->assertSame('audit', $dispatched[1]->toPayload()['meta']['integration']['stream']);
     }
 }
 

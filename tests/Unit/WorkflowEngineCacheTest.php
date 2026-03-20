@@ -44,6 +44,7 @@ class WorkflowEngineCacheTest extends TestCase
             $fields,
             $policy,
             $functions,
+            $events,
             null,
             true,
             300,
@@ -98,7 +99,8 @@ class WorkflowEngineCacheTest extends TestCase
             $executor,
             $fields,
             $policy,
-            $functions
+            $functions,
+            $events
         );
 
         $engine->activateDefinition('cache_test', [

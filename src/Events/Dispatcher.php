@@ -10,14 +10,10 @@ use Illuminate\Contracts\Events\Dispatcher as LaravelEventDispatcher;
 
 class Dispatcher implements EventDispatcherInterface
 {
-    /**
-    * @var array<int, array{name: string, payload: array<string, mixed>, outbox_id: string}>
-     */
+    /** @var array<int, array{event: WorkflowEvent, outbox_id: string}> */
     private array $queued = [];
 
-    /**
-     * @var array<int, array{name: string, payload: array<string, mixed>}>
-     */
+    /** @var array<int, WorkflowEvent> */
     private array $dispatched = [];
 
     public function __construct(
@@ -27,17 +23,14 @@ class Dispatcher implements EventDispatcherInterface
     ) {
     }
 
-    /**
-     * @param array<string, mixed> $payload
-     */
-    public function queue(string $eventName, array $payload = []): void
+    public function queue(WorkflowEvent $event): void
     {
-        $name = $this->prefix . $eventName;
+        $name = $event->fullEventName($this->prefix);
+        $payload = $event->toPayload();
         $outboxId = $this->outboxStore?->store($name, $payload) ?? '';
 
         $this->queued[] = [
-            'name' => $name,
-            'payload' => $payload,
+            'event' => $event,
             'outbox_id' => $outboxId,
         ];
     }
@@ -45,15 +38,18 @@ class Dispatcher implements EventDispatcherInterface
     public function flushAfterCommit(): void
     {
         foreach ($this->queued as $event) {
+            $name = $event['event']->fullEventName($this->prefix);
+            $payload = $event['event']->toPayload();
+
             if ($this->laravelEvents !== null) {
-                $this->laravelEvents->dispatch($event['name'], $event['payload']);
+                $this->laravelEvents->dispatch($name, $payload);
             }
 
             if ($this->outboxStore !== null && $event['outbox_id'] !== '') {
                 $this->outboxStore->markDispatched($event['outbox_id']);
             }
 
-            $this->dispatched[] = $event;
+            $this->dispatched[] = $event['event'];
         }
 
         $this->queued = [];
@@ -64,9 +60,7 @@ class Dispatcher implements EventDispatcherInterface
         $this->queued = [];
     }
 
-    /**
-     * @return array<int, array{name: string, payload: array<string, mixed>}>
-     */
+    /** @return array<int, WorkflowEvent> */
     public function dispatchedEvents(): array
     {
         return $this->dispatched;

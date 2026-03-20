@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Daiv05\LaravelWorkflowEngine\Engine;
 
 use Daiv05\LaravelWorkflowEngine\Contracts\DataMapperInterface;
+use Daiv05\LaravelWorkflowEngine\Contracts\EventDispatcherInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\StorageRepositoryInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\WorkflowEngineInterface;
 use Daiv05\LaravelWorkflowEngine\DSL\Compiler;
@@ -14,6 +15,7 @@ use Daiv05\LaravelWorkflowEngine\Exceptions\ActiveSubjectInstanceExistsException
 use Daiv05\LaravelWorkflowEngine\Exceptions\MappingException;
 use Daiv05\LaravelWorkflowEngine\Fields\FieldEngine;
 use Daiv05\LaravelWorkflowEngine\Functions\FunctionRegistry;
+use Daiv05\LaravelWorkflowEngine\Events\WorkflowInstanceStarted;
 use Daiv05\LaravelWorkflowEngine\Policies\PolicyEngine;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 
@@ -35,6 +37,7 @@ class WorkflowEngine implements WorkflowEngineInterface
         private readonly FieldEngine $fieldEngine,
         private readonly PolicyEngine $policy,
         private readonly FunctionRegistry $functions,
+        private readonly EventDispatcherInterface $events,
         private readonly ?CacheRepository $cache = null,
         private readonly bool $cacheEnabled = true,
         private readonly int $cacheTtl = 300,
@@ -73,7 +76,10 @@ class WorkflowEngine implements WorkflowEngineInterface
         }
 
         if (!$this->enforceOneActivePerSubject || $normalizedSubject === null) {
-            return $this->storage->createInstance($instance);
+            $created = $this->storage->createInstance($instance);
+            $this->emitWorkflowInstanceStarted($created, $workflowName);
+
+            return $created;
         }
 
         $finalStates = [];
@@ -81,7 +87,7 @@ class WorkflowEngine implements WorkflowEngineInterface
             $finalStates = array_values(array_filter($definition['final_states'], static fn ($state): bool => is_string($state) && $state !== ''));
         }
 
-        return $this->storage->transaction(function () use ($workflowName, $normalizedSubject, $tenantId, $finalStates, $instance): array {
+        $created = $this->storage->transaction(function () use ($workflowName, $normalizedSubject, $tenantId, $finalStates, $instance): array {
             $existing = $this->storage->getLatestActiveInstanceForSubject($workflowName, $normalizedSubject, $finalStates, $tenantId);
 
             if ($existing !== null) {
@@ -110,6 +116,10 @@ class WorkflowEngine implements WorkflowEngineInterface
                 );
             }
         });
+
+        $this->emitWorkflowInstanceStarted($created, $workflowName);
+
+        return $created;
     }
 
     /**
@@ -442,6 +452,29 @@ class WorkflowEngine implements WorkflowEngineInterface
         ];
 
         return $context;
+    }
+
+    /**
+     * @param array<string, mixed> $instance
+     */
+    private function emitWorkflowInstanceStarted(array $instance, string $workflowName): void
+    {
+        $subject = null;
+        if (isset($instance['subject_type']) && isset($instance['subject_id'])) {
+            $subject = [
+                'subject_type' => (string) $instance['subject_type'],
+                'subject_id' => (string) $instance['subject_id'],
+            ];
+        }
+
+        $this->events->queue(new WorkflowInstanceStarted(
+            (string) $instance['instance_id'],
+            $workflowName,
+            (string) $instance['state'],
+            $subject,
+            isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null
+        ));
+        $this->events->flushAfterCommit();
     }
 
     /**

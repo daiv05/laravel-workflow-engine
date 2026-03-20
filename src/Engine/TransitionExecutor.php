@@ -13,6 +13,8 @@ use Daiv05\LaravelWorkflowEngine\Exceptions\InvalidTransitionException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\MappingException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\UnauthorizedTransitionException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\WorkflowException;
+use Daiv05\LaravelWorkflowEngine\Events\TransitionExecuted;
+use Daiv05\LaravelWorkflowEngine\Events\TransitionFailed;
 use Daiv05\LaravelWorkflowEngine\Policies\PolicyEngine;
 
 class TransitionExecutor
@@ -113,21 +115,31 @@ class TransitionExecutor
                             continue;
                         }
 
-                        $payload = [
-                            'instance_id' => $instance['instance_id'],
-                            'action' => $action,
-                            'transition_id' => $transition['transition_id'],
-                            'context' => $context,
-                        ];
-
-                        if (array_key_exists('meta', $effect)) {
-                            $payload['meta'] = $effect['meta'];
+                        $subject = null;
+                        if (isset($instance['subject_type']) && isset($instance['subject_id'])) {
+                            $subject = [
+                                'subject_type' => (string) $instance['subject_type'],
+                                'subject_id' => (string) $instance['subject_id'],
+                            ];
                         }
 
-                        $this->events->queue($effect['event'], $payload);
+                        $transitionEvent = new TransitionExecuted(
+                            $effect['event'],
+                            (string) $instance['instance_id'],
+                            $fromState,
+                            $newState,
+                            $action,
+                            (string) $transition['transition_id'],
+                            $context,
+                            array_key_exists('meta', $effect) ? $effect['meta'] : null,
+                            $subject,
+                            isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null
+                        );
+
+                        $this->events->queue($transitionEvent);
                         $emittedEvents[] = [
                             'event' => $effect['event'],
-                            'payload' => $payload,
+                            'payload' => $transitionEvent->toPayload(),
                         ];
                     }
                 }
@@ -145,6 +157,24 @@ class TransitionExecutor
             }
         } catch (\Throwable $exception) {
             $this->events->clearQueue();
+
+            $subject = null;
+            if (isset($instance['subject_type']) && isset($instance['subject_id'])) {
+                $subject = [
+                    'subject_type' => (string) $instance['subject_type'],
+                    'subject_id' => (string) $instance['subject_id'],
+                ];
+            }
+
+            $this->events->queue(new TransitionFailed(
+                (string) ($instance['instance_id'] ?? ''),
+                (string) ($instance['state'] ?? ''),
+                $action,
+                $this->normalizeException($exception),
+                $subject,
+                isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null
+            ));
+            $this->events->flushAfterCommit();
 
             $this->diagnostics?->emit('transition.failed', [
                 'workflow_name' => $workflowName,

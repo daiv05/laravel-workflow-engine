@@ -161,6 +161,22 @@ Practical patterns for applications:
 - Security considerations
 - Testing patterns
 
+### 6. Active Instance Guard (Application-Level Only)
+
+**What:** Optional enforcement to prevent creating a second active instance for the same `(tenant_id, workflow_name, subject_type, subject_id)` scope.
+
+**Implemented behavior:**
+- Added configuration option in `config/workflow.php`: `'enforce_one_active_per_subject' => true/false`
+- Added application-level validation in `WorkflowEngine::start()` before create
+- Added transaction-wrapped check+create path to reduce race windows
+- Added clear domain exception message: "An active instance of {workflow} already exists for this subject"
+- Added repository-level active lookup (`getLatestActiveInstanceForSubject`) in database and in-memory storage
+
+**Decision:**
+- Keep this feature enforced at application level only.
+- Do not add database-specific unique constraints because support differs across engines.
+- Keep current transaction-wrapped pre-check plus domain exception behavior as the package standard.
+
 ## API Changes (Non-Breaking)
 
 ### Backward Compatible
@@ -206,9 +222,12 @@ Workflow::getInstancesForSubject($subjectRef, workflowName: 'workflow');
 - ✅ Query all instances for subject
 - ✅ Filter by workflow name
 - ✅ Engine subject query convenience methods
+- ✅ Reject duplicate active instance for same subject when enforcement is enabled
+- ✅ Allow new instance for same subject after previous reaches final state
 - ✅ Invalid subject reference fails with clear error
 - ✅ Subject-aware `can()` and `availableActions()`
 - ✅ Subject-aware `visibleFields()` visibility/editability projection
+- ✅ Subject included in workflow event payloads (`instance_started`, transition effects, and `transition_failed`)
 
 ## Design Decisions Reflected
 
@@ -218,87 +237,32 @@ Workflow::getInstancesForSubject($subjectRef, workflowName: 'workflow');
 4. **Tenant-aware queries:** All subject queries respect tenant isolation.
 5. **Optional feature:** Existing code unaffected; use only when needed.
 
-## Future Work (Out of Current Scope)
+## Event Payload Subject Summary (Implemented)
 
-### 1. One Active Instance Per Subject (Application-Level Only)
+Subject association is now propagated to workflow event payloads so observers do not need an additional instance lookup.
 
-**What:** Optional enforcement to prevent creating a second active instance for the same `(tenant_id, workflow_name, subject_type, subject_id)` scope.
+### Event Payload Behavior
 
-**Why:** Many workflows assume "one approval request per order" or "one onboarding per user". Currently, nothing prevents duplicate active workflows:
+- `workflow.event.instance_started` includes `subject` when the instance was started with subject data.
+- Transition effect events (for example `workflow.event.request_approved`) include `subject` in their payload.
+- `workflow.event.transition_failed` also includes `subject` when available.
 
-```php
-// Currently possible (accidental duplicate)
-Workflow::start('approval', ['subject' => $order]);  // Instance 1 (active)
-Workflow::start('approval', ['subject' => $order]);  // Instance 2 (active) - OOPS!
-
-// With app-level enforcement enabled, second call fails with clear error
-```
-
-**Implemented in this phase:**
-- Added configuration option in `config/workflow.php`: `'enforce_one_active_per_subject' => true/false`
-- Added application-level validation in `WorkflowEngine::start()` before create
-- Added transaction-wrapped check+create path to reduce race windows
-- Added clear domain exception message: "An active instance of {workflow} already exists for this subject"
-- Added repository-level active lookup (`getLatestActiveInstanceForSubject`) in database and in-memory storage
-- Added unit and integration coverage for rejection and post-final-state re-open
-
-**Decision:**
-- Keep this feature enforced at application level only.
-- Do not add database-specific unique constraints because support differs across engines.
-- Keep current transaction-wrapped pre-check plus domain exception behavior as the package standard.
-
----
-
-### 2. Add Subject Summary to Event Payloads for Observers
-
-**What:** Include normalized subject reference in `WorkflowInstanceStarted`, `TransitionExecuted`, and other workflow events.
-
-**Why:** Observers (listeners) often need to know which entity a workflow instance is processing. Currently, they must fetch the instance and extract subject:
+Payload shape when subject exists:
 
 ```php
-// Current (requires lookup)
-EventListener:
-  handle(TransitionExecuted $event) {
-    $instance = $storage->getInstance($event->instanceId);
-    $subject = ['type' => $instance['subject_type'], 'id' => $instance['subject_id']];
-    // ... notify domain model about state change
-  }
-
-// Proposed (subject in event)
-EventListener:
-  handle(TransitionExecuted $event) {
-    // $event->subject is already available
-    notify(model: $event->subject['subject_type'], id: $event->subject['subject_id']);
-  }
+[
+    'subject' => [
+        'subject_type' => 'App\\Models\\Solicitud',
+        'subject_id' => '123',
+    ],
+]
 ```
 
-**Implementation:**
-- Update all workflow event classes to include `?array $subject` property
-- Populate in event dispatcher when emitting
-- Update event listeners in application code to use the subject directly
+### Why It Matters
 
-**Example Event:**
-```php
-class TransitionExecuted extends WorkflowEvent
-{
-    public function __construct(
-        public string $instanceId,
-        public string $fromState,
-        public string $toState,
-        public string $action,
-        public array $context,
-        public ?array $subject = null,  // NEW
-        public ?string $tenantId = null,
-    ) {}
-}
-```
-
-**Benefits:**
-- Cleaner event listener code
-- No N+1 queries when observers need subject context
-- Encourages event-driven architecture for subject updates
-
----
+- Observers can update domain projections directly from event payloads.
+- Prevents extra reads to `workflow_instances` just to recover subject context.
+- Keeps event handling simpler and more deterministic.
 
 
 ## Migration Notes
