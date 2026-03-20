@@ -58,7 +58,8 @@ class WorkflowServiceProvider extends ServiceProvider
 
         $this->app->singleton(DataMapper::class, fn ($app) => new DataMapper(
             (array) $app['config']->get('workflow.bindings', []),
-            (bool) $app['config']->get('workflow.mappings.fail_silently', false)
+            (bool) $app['config']->get('workflow.mappings.fail_silently', false),
+            static fn (string $handlerClass): object => $app->make($handlerClass)
         ));
         $this->app->alias(DataMapper::class, DataMapperInterface::class);
 

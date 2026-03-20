@@ -79,7 +79,8 @@ class WorkflowEngineDataMappingTest extends TestCase
                     'allowed_if' => [],
                     'mappings' => [
                         'comment' => ['type' => 'attribute'],
-                        'documents' => ['type' => 'relation', 'target' => 'documents'],
+                        'documents' => ['type' => 'relation', 'target' => 'documents', 'mode' => 'create_many'],
+                        'document_refs' => ['type' => 'relation', 'target' => 'documents', 'mode' => 'reference_only'],
                         'document_ids' => ['type' => 'attach', 'target' => 'documents'],
                     ],
                 ],
@@ -97,6 +98,7 @@ class WorkflowEngineDataMappingTest extends TestCase
                     ['id' => 100],
                     ['id' => 101],
                 ],
+                'document_refs' => [100, ['id' => 101]],
                 'document_ids' => [100, 101],
             ],
             'user' => ['id' => 77],
@@ -105,6 +107,7 @@ class WorkflowEngineDataMappingTest extends TestCase
         $this->assertSame('done', $result['state']);
         $this->assertSame('approved', $result['data']['comment']);
         $this->assertSame([100, 101], $result['data']['documents']);
+        $this->assertSame([100, 101], $result['data']['document_refs']);
         $this->assertSame([100, 101], $result['data']['document_ids']);
 
         $history = $engine->history($instance['instance_id']);
@@ -113,15 +116,22 @@ class WorkflowEngineDataMappingTest extends TestCase
         $payload = $history[0]['payload'];
         $this->assertSame('tr_finish', $payload['transition_id']);
         $this->assertSame(true, $payload['context']['has_data']);
-        $this->assertSame(['comment', 'documents', 'document_ids'], $payload['context']['data_keys']);
+        $this->assertSame(['comment', 'documents', 'document_refs', 'document_ids'], $payload['context']['data_keys']);
         $this->assertArrayHasKey('mapping_summary', $payload);
         $this->assertArrayNotHasKey('user', $payload['context']);
+        $this->assertSame('create_many', $payload['mapping_summary']['documents']['mode']);
+        $this->assertSame('reference_only', $payload['mapping_summary']['document_refs']['mode']);
+        $this->assertSame('attached', $payload['mapping_summary']['document_refs']['status']);
 
         $resolved = $engine->resolveMappedData($instance['instance_id'], 'finish');
         $this->assertSame([
             ['id' => 100, 'label' => 'doc-100'],
             ['id' => 101, 'label' => 'doc-101'],
         ], $resolved['documents']);
+        $this->assertSame([
+            ['id' => 100, 'label' => 'doc-100'],
+            ['id' => 101, 'label' => 'doc-101'],
+        ], $resolved['document_refs']);
     }
 
     public function test_execute_requires_context_data_when_transition_has_mappings(): void

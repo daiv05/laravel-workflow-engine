@@ -45,6 +45,14 @@ interface WorkflowEngineInterface
     public function history(string $instanceId): array;
 
     /**
+     * @param array<string, mixed> $context
+     * @param array<string, mixed> $options
+     *
+     * @return array<string, mixed>
+     */
+    public function resolveMappedData(string $instanceId, string $action, array $context = [], array $options = []): array;
+
+    /**
      * Find the latest instance for a subject by workflow name and subject reference.
      *
      * @param array<string, mixed> $subjectRef ['subject_type' => string, 'subject_id' => scalar]

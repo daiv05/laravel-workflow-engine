@@ -160,6 +160,7 @@ class Validator
         }
 
         $allowedTypes = ['attribute', 'attach', 'relation', 'custom'];
+        $allowedRelationModes = ['create_many', 'reference_only'];
 
         foreach ($transition['mappings'] as $field => $mapping) {
             $fieldPath = $path . '.mappings.' . (string) $field;
@@ -183,6 +184,24 @@ class Validator
 
             if ($type === 'custom' && (!isset($mapping['handler']) || !is_string($mapping['handler']) || $mapping['handler'] === '')) {
                 throw DSLValidationException::withPath('mapping handler is required for custom type', $fieldPath . '.handler');
+            }
+
+            if ($type === 'custom' && is_string($mapping['handler'] ?? null) && !class_exists($mapping['handler'])) {
+                throw DSLValidationException::withPath('mapping handler must be a valid class name', $fieldPath . '.handler');
+            }
+
+            if (($type === 'attribute' || $type === 'custom') && array_key_exists('target', $mapping)) {
+                throw DSLValidationException::withPath('mapping target is not allowed for attribute/custom', $fieldPath . '.target');
+            }
+
+            if (($type === 'attribute' || $type === 'attach' || $type === 'custom') && array_key_exists('mode', $mapping)) {
+                throw DSLValidationException::withPath('mapping mode is only allowed for relation', $fieldPath . '.mode');
+            }
+
+            if ($type === 'relation' && array_key_exists('mode', $mapping)) {
+                if (!is_string($mapping['mode']) || !in_array($mapping['mode'], $allowedRelationModes, true)) {
+                    throw DSLValidationException::withPath('relation mode must be one of: create_many, reference_only', $fieldPath . '.mode');
+                }
             }
         }
     }

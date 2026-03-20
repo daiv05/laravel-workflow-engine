@@ -16,7 +16,8 @@ class DataMapper implements DataMapperInterface
      */
     public function __construct(
         private readonly array $bindings = [],
-        private readonly bool $failSilently = false
+        private readonly bool $failSilently = false,
+        private readonly mixed $resolver = null
     ) {
     }
 
@@ -58,7 +59,22 @@ class DataMapper implements DataMapperInterface
                 }
 
                 if ($type === 'relation') {
+                    $mode = $this->relationMode($config, $field);
                     $target = $this->requiredTarget($config, $field);
+
+                    if ($mode === 'reference_only') {
+                        $references = $this->normalizeReferences($value);
+                        $instanceData[$field] = $references;
+                        $summary[$field] = [
+                            'type' => $type,
+                            'status' => 'attached',
+                            'target' => $target,
+                            'mode' => $mode,
+                            'references_count' => count($references),
+                        ];
+                        continue;
+                    }
+
                     $handler = $this->resolveBindingWriter($target);
 
                     $result = $handler->handle($value, $this->handlerContext($context, $field, $config, $value));
@@ -72,6 +88,7 @@ class DataMapper implements DataMapperInterface
                         'type' => $type,
                         'status' => 'persisted',
                         'target' => $target,
+                        'mode' => $mode,
                     ];
                     continue;
                 }
@@ -126,58 +143,94 @@ class DataMapper implements DataMapperInterface
             $storedValue = $instanceData[$field] ?? null;
 
             if ($type === 'attribute') {
-                $resolved[$field] = $storedValue;
-                continue;
+                try {
+                    $resolved[$field] = $storedValue;
+                    continue;
+                } catch (\Throwable $exception) {
+                    if ($this->failSilently) {
+                        $resolved[$field] = $storedValue;
+                        continue;
+                    }
+
+                    throw $exception;
+                }
             }
 
             if ($type === 'attach') {
-                $target = isset($config['target']) && is_string($config['target']) ? $config['target'] : null;
-                if ($target === null) {
-                    $resolved[$field] = $storedValue;
-                    continue;
-                }
+                try {
+                    $target = isset($config['target']) && is_string($config['target']) ? $config['target'] : null;
+                    if ($target === null) {
+                        $resolved[$field] = $storedValue;
+                        continue;
+                    }
 
-                $queryHandler = $this->resolveBindingReader($target, false);
-                if ($queryHandler === null) {
-                    $resolved[$field] = $storedValue;
-                    continue;
-                }
+                    $queryHandler = $this->resolveBindingReader($target, false);
+                    if ($queryHandler === null) {
+                        $resolved[$field] = $storedValue;
+                        continue;
+                    }
 
-                $resolved[$field] = $queryHandler->fetch(
-                    $this->queryContext($context, $field, $config, $storedValue),
-                    $options
-                );
-                continue;
+                    $resolved[$field] = $queryHandler->fetch(
+                        $this->queryContext($context, $field, $config, $storedValue),
+                        $options
+                    );
+                    continue;
+                } catch (\Throwable $exception) {
+                    if ($this->failSilently) {
+                        $resolved[$field] = $storedValue;
+                        continue;
+                    }
+
+                    throw $exception;
+                }
             }
 
             if ($type === 'relation') {
-                $target = $this->requiredTarget($config, $field);
-                $queryHandler = $this->resolveBindingReader($target);
+                try {
+                    $target = $this->requiredTarget($config, $field);
+                    $queryHandler = $this->resolveBindingReader($target);
 
-                if ($queryHandler === null) {
-                    $resolved[$field] = $storedValue;
+                    if ($queryHandler === null) {
+                        $resolved[$field] = $storedValue;
+                        continue;
+                    }
+
+                    $resolved[$field] = $queryHandler->fetch(
+                        $this->queryContext($context, $field, $config, $storedValue),
+                        $options
+                    );
                     continue;
-                }
+                } catch (\Throwable $exception) {
+                    if ($this->failSilently) {
+                        $resolved[$field] = $storedValue;
+                        continue;
+                    }
 
-                $resolved[$field] = $queryHandler->fetch(
-                    $this->queryContext($context, $field, $config, $storedValue),
-                    $options
-                );
-                continue;
+                    throw $exception;
+                }
             }
 
             if ($type === 'custom') {
-                $queryHandler = $this->resolveCustomReader($config, $field);
-                if ($queryHandler === null) {
-                    $resolved[$field] = $storedValue;
-                    continue;
-                }
+                try {
+                    $queryHandler = $this->resolveCustomReader($config, $field);
+                    if ($queryHandler === null) {
+                        $resolved[$field] = $storedValue;
+                        continue;
+                    }
 
-                $resolved[$field] = $queryHandler->fetch(
-                    $this->queryContext($context, $field, $config, $storedValue),
-                    $options
-                );
-                continue;
+                    $resolved[$field] = $queryHandler->fetch(
+                        $this->queryContext($context, $field, $config, $storedValue),
+                        $options
+                    );
+                    continue;
+                } catch (\Throwable $exception) {
+                    if ($this->failSilently) {
+                        $resolved[$field] = $storedValue;
+                        continue;
+                    }
+
+                    throw $exception;
+                }
             }
 
             throw MappingException::invalidMappingType($type, $field);
@@ -214,6 +267,22 @@ class DataMapper implements DataMapperInterface
         }
 
         return $references;
+    }
+
+    /**
+     * @param array<string, mixed> $config
+     */
+    private function relationMode(array $config, string $field): string
+    {
+        if (!isset($config['mode']) || !is_string($config['mode']) || $config['mode'] === '') {
+            return 'create_many';
+        }
+
+        if (!in_array($config['mode'], ['create_many', 'reference_only'], true)) {
+            throw MappingException::invalidRelationMode($config['mode'], $field);
+        }
+
+        return $config['mode'];
     }
 
     /**
@@ -330,7 +399,7 @@ class DataMapper implements DataMapperInterface
             throw MappingException::invalidHandler($handlerClass, MappingHandlerInterface::class);
         }
 
-        $handler = new $handlerClass();
+        $handler = $this->instantiate($handlerClass);
 
         if (!$handler instanceof MappingHandlerInterface) {
             throw MappingException::invalidHandler($handlerClass, MappingHandlerInterface::class);
@@ -345,7 +414,7 @@ class DataMapper implements DataMapperInterface
             throw MappingException::invalidHandler($handlerClass, MappingQueryHandlerInterface::class);
         }
 
-        $handler = new $handlerClass();
+        $handler = $this->instantiate($handlerClass);
 
         if ($handler instanceof MappingQueryHandlerInterface) {
             return $handler;
@@ -356,5 +425,18 @@ class DataMapper implements DataMapperInterface
         }
 
         throw MappingException::invalidHandler($handlerClass, MappingQueryHandlerInterface::class);
+    }
+
+    private function instantiate(string $handlerClass): mixed
+    {
+        if (is_callable($this->resolver)) {
+            try {
+                return call_user_func($this->resolver, $handlerClass);
+            } catch (\Throwable) {
+                // Fallback keeps compatibility for simple class-based handlers.
+            }
+        }
+
+        return new $handlerClass();
     }
 }

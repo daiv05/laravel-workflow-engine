@@ -23,7 +23,8 @@ class DataMapperTest extends TestCase
 
         $mappings = [
             'comment' => ['type' => 'attribute'],
-            'documents' => ['type' => 'relation', 'target' => 'documents'],
+            'documents' => ['type' => 'relation', 'target' => 'documents', 'mode' => 'create_many'],
+            'document_refs' => ['type' => 'relation', 'target' => 'documents', 'mode' => 'reference_only'],
             'document_ids' => ['type' => 'attach', 'target' => 'documents'],
             'code' => ['type' => 'custom', 'handler' => TestUppercaseMapper::class, 'query_handler' => TestUppercaseMapper::class],
         ];
@@ -34,14 +35,19 @@ class DataMapperTest extends TestCase
                 ['id' => 10, 'name' => 'a'],
                 ['id' => 11, 'name' => 'b'],
             ],
+            'document_refs' => [10, ['id' => 11]],
             'document_ids' => [1, ['id' => 2]],
             'code' => 'ab-123',
         ]);
 
         $this->assertSame('ready', $result['instance_data']['comment']);
         $this->assertSame([10, 11], $result['instance_data']['documents']);
+        $this->assertSame([10, 11], $result['instance_data']['document_refs']);
         $this->assertSame([1, 2], $result['instance_data']['document_ids']);
         $this->assertSame('AB-123', $result['instance_data']['code']);
+        $this->assertSame('create_many', $result['summary']['documents']['mode']);
+        $this->assertSame('reference_only', $result['summary']['document_refs']['mode']);
+        $this->assertSame('attached', $result['summary']['document_refs']['status']);
 
         $resolved = $mapper->resolve($mappings, $result['instance_data']);
 
@@ -50,6 +56,10 @@ class DataMapperTest extends TestCase
             ['id' => 10, 'label' => 'doc-10'],
             ['id' => 11, 'label' => 'doc-11'],
         ], $resolved['documents']);
+        $this->assertSame([
+            ['id' => 10, 'label' => 'doc-10'],
+            ['id' => 11, 'label' => 'doc-11'],
+        ], $resolved['document_refs']);
         $this->assertSame([
             ['id' => 1, 'label' => 'doc-1'],
             ['id' => 2, 'label' => 'doc-2'],
@@ -69,6 +79,50 @@ class DataMapperTest extends TestCase
             'documents' => [['id' => 1]],
         ]);
     }
+
+    public function test_it_resolves_with_fail_silently_enabled(): void
+    {
+        $mapper = new DataMapper([], true);
+
+        $mappings = [
+            'code' => ['type' => 'custom', 'handler' => MissingHandler::class],
+            'documents' => ['type' => 'relation', 'target' => 'documents'],
+        ];
+
+        $resolved = $mapper->resolve($mappings, [
+            'code' => 'AB-1',
+            'documents' => [10, 11],
+        ]);
+
+        $this->assertSame('AB-1', $resolved['code']);
+        $this->assertSame([10, 11], $resolved['documents']);
+    }
+
+    public function test_it_resolves_handlers_through_injected_resolver(): void
+    {
+        $mapper = new DataMapper([], false, static fn (string $handlerClass): object => match ($handlerClass) {
+            TestResolverMapper::class => new TestResolverMapper('prefix-'),
+            default => new $handlerClass(),
+        });
+
+        $result = $mapper->map([
+            'token' => ['type' => 'custom', 'handler' => TestResolverMapper::class, 'query_handler' => TestResolverMapper::class],
+        ], [], [
+            'token' => 'abc',
+        ]);
+
+        $this->assertSame('prefix-abc', $result['instance_data']['token']);
+
+        $resolved = $mapper->resolve([
+            'token' => ['type' => 'custom', 'handler' => TestResolverMapper::class, 'query_handler' => TestResolverMapper::class],
+        ], $result['instance_data']);
+
+        $this->assertSame('resolved:prefix-abc', $resolved['token']);
+    }
+}
+
+class MissingHandler
+{
 }
 
 class TestDocumentMapper implements MappingHandlerInterface, MappingQueryHandlerInterface
@@ -116,6 +170,23 @@ class TestUppercaseMapper implements MappingHandlerInterface, MappingQueryHandle
     public function handle(mixed $value, array $context): ?array
     {
         return ['value' => strtoupper((string) $value)];
+    }
+
+    public function fetch(array $context, array $options = []): mixed
+    {
+        return 'resolved:' . (string) ($context['value'] ?? '');
+    }
+}
+
+class TestResolverMapper implements MappingHandlerInterface, MappingQueryHandlerInterface
+{
+    public function __construct(private readonly string $prefix)
+    {
+    }
+
+    public function handle(mixed $value, array $context): ?array
+    {
+        return ['value' => $this->prefix . (string) $value];
     }
 
     public function fetch(array $context, array $options = []): mixed

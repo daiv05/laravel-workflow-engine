@@ -1,576 +1,162 @@
-# 📄 Feature Design Document
+# Data Mapper V2 Specification
 
-## Data Mapping Layer & External Persistence
+## 1. Purpose
 
----
+Data Mapper V2 defines a deterministic mapping contract between workflow transition input and external persistence handlers, while keeping the engine independent from ORM and business storage details.
 
-## 1. Overview
+## 2. Design Goals
 
-This feature introduces a **Data Mapping Layer** that allows workflow input data to be:
+- Keep mappings declarative in DSL.
+- Keep persistence logic in application handlers.
+- Keep runtime deterministic and auditable.
+- Keep memory/database driver compatibility.
 
-* Stored in workflow instance data when needed
-* Persisted into external models/tables
-* Transformed via custom handlers
-* Extended with hooks and events
+## 3. Supported Mapping Types
 
-It enables the workflow engine to remain **agnostic of database structure**, while allowing deep integration with Laravel applications.
+### `attribute`
 
----
+- Stores the incoming field value directly in `workflow_instances.data`.
+- No `target`.
+- No `mode`.
 
-## 2. Motivation
+### `attach`
 
-### Problem
+- Stores normalized references only (for example IDs).
+- Requires `target`.
+- No `mode`.
 
-Workflow executions often include:
+### `relation`
 
-* Documents
-* Comments
-* Financial data
-* External references
+- Delegates write/read to binding handlers.
+- Requires `target`.
+- Supports `mode`:
+  - `create_many` (default)
+  - `reference_only`
 
-Storing everything in JSON leads to:
+`mode` is a validated runtime hint. The engine does not run ORM logic itself.
 
-* performance issues
-* poor queryability
-* large payloads
+### `custom`
 
----
+- Delegates write/read to a custom handler class.
+- Requires `handler` as valid FQCN.
+- `target` is not allowed.
+- `mode` is not allowed.
 
-### Goal
+## 4. DSL Schema Rules (V2)
 
-Provide a flexible system where:
+For each mapping field:
 
-* The DSL declares **what should happen**
-* Laravel code defines **how it happens**
+- `type` must be one of: `attribute`, `attach`, `relation`, `custom`.
+- `attach` and `relation` require `target` (non-empty string).
+- `relation.mode` if present must be `create_many` or `reference_only`.
+- `mode` is allowed only for `relation`.
+- `custom.handler` must be a valid class name.
+- Unsupported keys for a mapping type fail validation.
 
----
+## 5. Runtime Contracts
 
-## 3. Goals
-
-### Primary Goals
-
-* Introduce a **mapping system** for workflow data
-* Support persistence outside the workflow engine
-* Keep the engine DB-agnostic
-* Allow extensibility via handlers
-
----
-
-### Secondary Goals
-
-* Support attachments pattern
-* Enable per-field processing
-* Integrate with events and inline listeners
-
----
-
-## 4. Non-Goals
-
-* Direct database access from DSL
-* ORM abstraction inside the engine
-* Schema definition in workflows
-
----
-
-## 5. High-Level Architecture
-
-```text
-WorkflowEngine
-   ↓
-Transition Execution
-   ↓
-DataMapper
-   ↓
-Mapping Handlers (Laravel side)
-   ↓
-Eloquent / Services / Storage
-   ↓
-Events (Global + Inline)
-```
-
----
-
-## 6. DSL Design
-
-### 6.1 Mapping Definition
-
-```yaml
-transitions:
-
-  - from: en_revision
-    to: aprobado
-    action: aprobar
-
-    mappings:
-
-      comentario:
-        type: attribute
-
-      documentos:
-        type: relation
-        target: documents
-        mode: create_many
-```
-
----
-
-## 7. Mapping Types
-
-### 7.1 Attribute
-
-Stores data in workflow context.
-
-```yaml
-comentario:
-  type: attribute
-```
-
----
-
-### 7.2 Relation
-
-Creates or persists related records.
-
-```yaml
-documentos:
-  type: relation
-  target: documents
-  mode: create_many
-```
-
----
-
-### 7.3 Attach
-
-Stores references only (IDs).
-
-```yaml
-documentos:
-  type: attach
-  target: documents
-```
-
----
-
-### 7.4 Custom
-
-Delegates to a custom handler.
-
-```yaml
-monto:
-  type: custom
-  handler: processMonto
-```
-
----
-
-## 8. Application Configuration
-
-### 8.1 Bindings
-
-```php
-// config/workflow.php
-
-'bindings' => [
-
-    'documents' => [
-        'model' => App\Models\Document::class,
-        'handler' => App\Mappers\DocumentMapper::class,
-    ],
-
-],
-```
-
----
-
-## 9. DataMapper Component
-
-### Responsibilities
-
-* Interpret mappings
-* Route data to correct handlers
-* Keep engine decoupled
-
----
-
-### Interface
+### `DataMapperInterface`
 
 ```php
 interface DataMapperInterface
 {
-  public function map(array $mappings, array $instanceData, array $inputData, array $context = []): array;
-  public function resolve(array $mappings, array $instanceData, array $context = [], array $options = []): array;
+    public function map(array $mappings, array $instanceData, array $inputData, array $context = []): array;
+
+    public function resolve(array $mappings, array $instanceData, array $context = [], array $options = []): array;
 }
 ```
 
----
-
-### Core Implementation
-
-```php
-class DataMapper implements DataMapperInterface
-{
-    public function map(array $mappings, array $data, array $context): void
-    {
-        foreach ($mappings as $field => $config) {
-
-            $value = $data[$field] ?? null;
-
-            if ($value === null) {
-                continue;
-            }
-
-            $this->handleField($field, $value, $config, $context);
-        }
-    }
-}
-```
-
----
-
-## 10. Handler System
-
-### Contract
+### Handler Contracts
 
 ```php
 interface MappingHandlerInterface
 {
-  public function handle(mixed $value, array $context): ?array;
+    public function handle(mixed $value, array $context): ?array;
 }
 
 interface MappingQueryHandlerInterface
 {
-  public function fetch(array $context, array $options = []): mixed;
+    public function fetch(array $context, array $options = []): mixed;
 }
 ```
 
----
-
-### Example Handler
+## 6. Binding Configuration
 
 ```php
-class DocumentMapper implements MappingHandlerInterface
-{
-    public function handle($value, array $context): void
-    {
-        foreach ($value as $doc) {
-
-            $record = Document::create([
-                'path' => $doc['path'],
-                'solicitud_id' => $context['model']->id,
-            ]);
-
-        }
-    }
-}
-```
-
----
-
-## 11. Context Handling
-
-### Workflow Context
-
-```php
-[
-  'roles' => [...],
-  'actor' => 'user-123',
-  'user' => $user,
-  'model' => $model,
-  'data' => [...],
-  'meta' => [...],
-]
-```
-
----
-
-### Context Contract (Agreed)
-
-The runtime context is split by responsibility:
-
-* `context.data` is the **mapping input payload**.
-* `context.roles` is used only for role-based rule evaluation.
-* `context.actor` is used for transition audit (`workflow_histories.actor`).
-* `context.meta` is optional tracing/technical metadata.
-* `context.user` and `context.model` are runtime helpers and must not be blindly serialized.
-
-When a transition defines `mappings`, `context.data` must be an array.
-
----
-
-### JSON Storage
-
-```text
-workflow_instances.data
-workflow_histories.payload
-```
-
-Stores:
-
-* `workflow_instances.data`: attribute values and reference IDs (current snapshot)
-* `workflow_histories.payload`: transition snapshot + mapping summary (audit)
-
-Important alignment with current package behavior:
-
-* There is no `workflow_histories.context` column.
-* `context.data` is not equivalent to `workflow_histories.payload`.
-* History payload must store a safe summary, not the full raw context.
-
----
-
-## 12. Attachments Pattern
-
-### Concept
-
-* Files are stored externally (disk/S3)
-* DB stores metadata
-* workflow stores only references
-
----
-
-### Example
-
-```json
-{
-  "document_ids": [1, 2]
-}
-```
-
----
-
-## 13. Event Integration
-
-### After Mapping
-
-Events are dispatched:
-
-```php
-event('workflow.event.aprobado', $context);
-```
-
----
-
-### Inline Listeners
-
-```php
-Workflow::execution()
-    ->on('aprobado', fn ($ctx) => ...)
-    ->execute(...);
-```
-
----
-
-## 14. Execution Flow
-
-```text
-1. execute()
-2. resolve transition
-3. validate rules
-4. validate mapping input contract (context.data)
-5. DataMapper.map()
-6. persist instance state/data + history in one transaction (history stores safe context + mapping summary)
-7. dispatch events after commit
-   - inline listeners
-   - Laravel events
-```
-
----
-
-## 15. Error Handling
-
-| Case                 | Behavior     |
-| -------------------- | ------------ |
-| Missing binding      | exception    |
-| Invalid handler      | exception    |
-| Invalid mapping type | exception    |
-| Invalid context.data | exception    |
-
----
-
-### Config
-
-```php
-'mappings' => [
-    'fail_silently' => false,
+'bindings' => [
+    'documents' => [
+        'handler' => App\Workflow\Mappings\DocumentBindingHandler::class,
+        'query_handler' => App\Workflow\Mappings\DocumentBindingHandler::class,
+    ],
 ],
 ```
 
----
+`handler` and `query_handler` are resolved through the Laravel container when available, with fallback to direct instantiation.
 
-## 16. Data Retrieval Strategy (Bindings + Mappings)
+## 7. Execution and Read Flow
 
-This section defines how application code retrieves related data after mapping is executed.
+Write path in `execute()`:
 
-### 16.1 Retrieval by Mapping Type
+1. Transition is resolved and authorized.
+2. `context.data` is required if transition has mappings.
+3. `DataMapper::map()` applies field mappings.
+4. Instance state/data and history are persisted in one transaction.
+5. Events are flushed after commit.
 
-* `attribute`:
-  * Read from `workflow_instances.data`.
-  * Use for lightweight fields that belong to workflow state.
+Read path in `resolveMappedData()`:
 
-* `attach`:
-  * Store only references (for example, `document_ids`) in `workflow_instances.data`.
-  * Resolve full records via configured binding target repository/model.
+1. Resolve transition by state/action.
+2. Fallback to latest history transition match.
+3. Fallback to unique action transition.
+4. `DataMapper::resolve()` composes field outputs.
 
-* `relation`:
-  * Persist related records externally through binding handler.
-  * Keep external IDs or keys in workflow data only when needed for traceability.
+## 8. History and Audit
 
-* `custom`:
-  * Retrieval is delegated to the custom handler contract.
-  * Handler is responsible for providing deterministic read behavior.
+History payload stores:
 
-### 16.2 Binding-Level Query Contract
+- transition metadata
+- safe context summary
+- `mapping_summary` per mapped field
 
-To keep retrieval explicit and decoupled, each binding should expose a read method in addition to write handling.
+`mapping_summary` includes stable keys:
 
-Suggested contract:
+- `type`
+- `status`
+- `target` (when applicable)
+- `mode` (for relation)
+- `error` (when fail-silent captures an error)
 
-```php
-interface MappingQueryHandlerInterface
-{
-    public function fetch(array $context, array $options = []): mixed;
-}
-```
+## 9. Error Model
 
-If a handler supports both write and read paths, it can implement both contracts:
+When `workflow.mappings.fail_silently = false`:
 
-```php
-interface MappingHandlerInterface
-{
-    public function handle(mixed $value, array $context): array;
-}
+- invalid mapping type or mode fails fast
+- missing binding fails fast
+- invalid handler class or contract fails fast
 
-interface MappingQueryHandlerInterface
-{
-    public function fetch(array $context, array $options = []): mixed;
-}
-```
+When `workflow.mappings.fail_silently = true`:
 
-### 16.3 Recommended Read Resolution Order
+- write/read mapping errors are captured and field processing falls back safely
 
-1. Read workflow instance (`state`, `data`) as source of workflow snapshot.
-2. For each mapped field:
-   * return `attribute` values directly,
-   * resolve `attach`/`relation` through binding query handler.
-3. Return a composed read model to callers (API/resource layer).
+## 10. Non-Goals
 
-### 16.4 Memory Driver Compatibility
+- No ORM orchestration in engine core.
+- No direct DB access from DSL.
+- No dynamic code execution from DSL.
 
-The memory driver remains supported.
+## 11. Migration Notes (Breaking)
 
-* Do not remove memory mode.
-* Mapping handlers must be storage-agnostic.
-* Provide in-memory/fake query handlers for tests.
+- `relation.mode` is validated.
+- `custom.handler` must be a real class name.
+- `mode` on non-`relation` mappings is rejected.
+- `target` on `attribute` and `custom` mappings is rejected.
 
----
+## 12. Test Requirements
 
-## 17. Performance Considerations
+Minimum coverage for V2:
 
-* Handlers execute synchronously
-* Heavy logic should be queued
-* Avoid large payloads in context
-
----
-
-## 18. Security Considerations
-
-* No direct DB access from DSL
-* No dynamic code execution
-* Handlers are trusted PHP code
-
----
-
-## 19. Testing Strategy
-
-### Unit Tests
-
-* mapping resolution (`attribute`, `attach`, `relation`, `custom`)
-* handler invocation (write + read contracts)
-
----
-
-### Integration Tests
-
-```php
-Workflow::execute('aprobar', [...]);
-```
-
-Assert:
-
-* DB records created
-* workflow instance data updated correctly
-* history payload contains mapping summary (not full raw context)
-* rollback leaves no partial side effects when mapping fails
-* related data can be reconstructed through `resolveMappedData()` + binding query handlers
-
----
-
-## 20. Extensibility
-
-### Supported Extensions
-
-* custom mapping types
-* custom handlers
-* event listeners
-
----
-
-## 21. Constraints
-
-* DSL must remain declarative
-* engine must remain agnostic
-* mappings must use bindings
-* memory and database drivers must both be supported
-
----
-
-## 22. Risks
-
----
-
-### Hidden Logic
-
-Business logic spread across handlers.
-
-**Mitigation:**
-
-* clear naming conventions
-* documentation
-
----
-
-## 23. Best Practices
-
-* Keep mappings simple
-* Use handlers for complex logic
-* Store only references in context
-* Use events for side effects
-
----
-
-## 24. Future Enhancements
-
-* async mapping (queue)
-* batch operations
-* mapping validation schemas
-* visual mapping tools
-
----
-
-## 25. Conclusion
-
-This feature enables the workflow engine to act as a:
-
-> **data orchestrator rather than a data owner**
-
-It provides:
-
-* flexibility
-* scalability
-* clean separation of concerns
-
-while maintaining:
-
-* simplicity
-* developer control
-* Laravel-native integration
+- Unit: validator errors and accepted V2 mappings.
+- Unit: mapper write/read for all mapping types.
+- Unit: relation mode behavior (`create_many`, `reference_only`).
+- Integration: `start -> can -> execute -> events -> persistence` with mappings.
+- Integration: rollback without partial side effects when handler fails.
