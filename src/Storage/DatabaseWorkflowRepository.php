@@ -119,6 +119,8 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
             'state' => (string) $instance['state'],
             'data' => json_encode($instance['data'] ?? [], JSON_THROW_ON_ERROR),
             'version' => (int) ($instance['version'] ?? 0),
+            'subject_type' => $instance['subject_type'] ?? null,
+            'subject_id' => $instance['subject_id'] ?? null,
             'created_at' => $instance['created_at'] ?? $timestamp,
             'updated_at' => $instance['updated_at'] ?? $timestamp,
         ]);
@@ -254,8 +256,111 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
             'state' => (string) $row['state'],
             'data' => is_array($data) ? $data : [],
             'version' => (int) $row['version'],
+            'subject_type' => $row['subject_type'] ?? null,
+            'subject_id' => $row['subject_id'] ?? null,
             'created_at' => (string) $row['created_at'],
             'updated_at' => (string) $row['updated_at'],
         ];
+    }
+
+    /**
+     * @param array<string, string> $subjectRef
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getLatestInstanceForSubject(string $workflowName, array $subjectRef, ?string $tenantId = null): ?array
+    {
+        $query = $this->connection->table('workflow_instances')
+            ->join('workflow_definitions', 'workflow_instances.workflow_definition_id', '=', 'workflow_definitions.id')
+            ->where('workflow_definitions.workflow_name', $workflowName)
+            ->where('workflow_instances.subject_type', $subjectRef['subject_type'] ?? null)
+            ->where('workflow_instances.subject_id', $subjectRef['subject_id'] ?? null);
+
+        if ($tenantId === null) {
+            $query->whereNull('workflow_instances.tenant_id');
+        } else {
+            $query->where('workflow_instances.tenant_id', $tenantId);
+        }
+
+        $row = $query->orderByDesc('workflow_instances.created_at')
+            ->first(['workflow_instances.*']);
+
+        if ($row === null) {
+            return null;
+        }
+
+        return $this->hydrateInstance((array) $row);
+    }
+
+    /**
+     * @param array<string, string> $subjectRef
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getInstancesForSubject(array $subjectRef, ?string $tenantId = null, ?string $workflowName = null): array
+    {
+        $query = $this->connection->table('workflow_instances')
+            ->where('workflow_instances.subject_type', $subjectRef['subject_type'] ?? null)
+            ->where('workflow_instances.subject_id', $subjectRef['subject_id'] ?? null);
+
+        if ($tenantId === null) {
+            $query->whereNull('workflow_instances.tenant_id');
+        } else {
+            $query->where('workflow_instances.tenant_id', $tenantId);
+        }
+
+        if ($workflowName !== null) {
+            $query->join('workflow_definitions', 'workflow_instances.workflow_definition_id', '=', 'workflow_definitions.id')
+                ->where('workflow_definitions.workflow_name', $workflowName);
+        }
+
+        $rows = $query->orderBy('workflow_instances.created_at')
+            ->get(['workflow_instances.*']);
+
+        $result = [];
+        foreach ($rows as $row) {
+            $result[] = $this->hydrateInstance((array) $row);
+        }
+
+        return $result;
+    }
+
+    /**
+     * @param array<string, string> $subjectRef
+     * @param array<int, string> $finalStates
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getLatestActiveInstanceForSubject(
+        string $workflowName,
+        array $subjectRef,
+        array $finalStates,
+        ?string $tenantId = null
+    ): ?array {
+        $query = $this->connection->table('workflow_instances')
+            ->join('workflow_definitions', 'workflow_instances.workflow_definition_id', '=', 'workflow_definitions.id')
+            ->where('workflow_definitions.workflow_name', $workflowName)
+            ->where('workflow_instances.subject_type', $subjectRef['subject_type'] ?? null)
+            ->where('workflow_instances.subject_id', $subjectRef['subject_id'] ?? null);
+
+        if ($tenantId === null) {
+            $query->whereNull('workflow_instances.tenant_id');
+        } else {
+            $query->where('workflow_instances.tenant_id', $tenantId);
+        }
+
+        if ($finalStates !== []) {
+            $query->whereNotIn('workflow_instances.state', $finalStates);
+        }
+
+        $row = $query->orderByDesc('workflow_instances.created_at')
+            ->orderByDesc('workflow_instances.instance_id')
+            ->first(['workflow_instances.*']);
+
+        if ($row === null) {
+            return null;
+        }
+
+        return $this->hydrateInstance((array) $row);
     }
 }

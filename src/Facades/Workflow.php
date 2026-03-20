@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Facade;
 
 /**
  * @method static ExecutionBuilder execution(?string $instanceId = null)
+ * @method static array<string, mixed>|null getLatestInstanceForSubject(string $workflowName, array $subjectRef, ?string $tenantId = null)
+ * @method static array<int, array<string, mixed>> getInstancesForSubject(array $subjectRef, ?string $tenantId = null, ?string $workflowName = null)
  */
 class Workflow extends Facade
 {

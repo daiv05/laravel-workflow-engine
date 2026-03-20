@@ -46,6 +46,14 @@ Incoming `tenant_id` values are ignored.
 - Creates instance with UUID instance_id.
 - Stores immutable workflow_definition_id on the instance.
 - Initializes state with definition initial_state.
+- When `workflow.enforce_one_active_per_subject` is enabled and `options.subject` is provided, rejects creating a second active instance for the same workflow + tenant + subject scope.
+- Active status for this guard is evaluated as `state NOT IN definition.final_states`.
+
+### start Exceptions
+
+- `ActiveSubjectInstanceExistsException`: thrown when `workflow.enforce_one_active_per_subject` is enabled and an active instance already exists for the same scope.
+- Exception message: `An active instance of {workflow} already exists for this subject`.
+- Exception context includes `workflow_name`, `subject_type`, `subject_id`, `existing_instance_id`, and `tenant_id`.
 
 ## can
 
@@ -62,6 +70,7 @@ can(string $instanceId, string $action, array $context = []): bool
 - Side-effect free.
 - Evaluates transition existence from current state.
 - Evaluates policy/rule authorization.
+- Automatically injects persisted instance subject into rule context as `subject.subject_type` and `subject.subject_id` when available.
 - Returns false when the current state is in `final_states`, even if DSL defines outgoing transitions.
 - Returns false on invalid transition or non-evaluable context.
 
@@ -171,6 +180,7 @@ visibleFields(string $instanceId, array $context = []): array
 ### Behavior
 
 - Evaluates field conditions through rule engine.
+- Automatically injects persisted instance subject into rule context as `subject.subject_type` and `subject.subject_id` when available.
 - Returns per-action visibility/editability projection.
 - Returns an empty map when the instance is in a final state.
 
@@ -188,6 +198,7 @@ availableActions(string $instanceId, array $context = []): array
 
 - Evaluates transitions available from current state.
 - Applies policy/rule authorization per action.
+- Automatically injects persisted instance subject into rule context as `subject.subject_type` and `subject.subject_id` when available.
 - Returns only actions executable now for the provided context.
 - Returns empty when instance is in a final state.
 
@@ -205,6 +216,68 @@ history(string $instanceId): array
 
 - Returns records ordered by creation sequence.
 - Includes action, transition id, from/to states, actor, and payload snapshot.
+
+## getLatestInstanceForSubject
+
+Returns the most recent workflow instance for a workflow name and subject reference.
+
+### Signature
+
+```php
+getLatestInstanceForSubject(string $workflowName, array $subjectRef, ?string $tenantId = null): ?array
+```
+
+### Parameters
+
+- workflowName: workflow definition name.
+- subjectRef: associative array with `subject_type` and `subject_id`.
+- tenantId: optional tenant override; when null, the engine default tenant is used.
+
+### Behavior
+
+- Normalizes and validates `subjectRef` through `SubjectNormalizer`.
+- Delegates query execution to storage repository implementation.
+- Returns `null` when no matching instance exists.
+
+### Example
+
+```php
+$latest = Workflow::getLatestInstanceForSubject('termination_request', [
+	'subject_type' => App\Models\Solicitud::class,
+	'subject_id' => 123, // normalized to string internally
+]);
+```
+
+## getInstancesForSubject
+
+Returns workflow instances for a subject reference, optionally filtered by workflow name.
+
+### Signature
+
+```php
+getInstancesForSubject(array $subjectRef, ?string $tenantId = null, ?string $workflowName = null): array
+```
+
+### Parameters
+
+- subjectRef: associative array with `subject_type` and `subject_id`.
+- tenantId: optional tenant override; when null, the engine default tenant is used.
+- workflowName: optional workflow filter.
+
+### Behavior
+
+- Normalizes and validates `subjectRef` through `SubjectNormalizer`.
+- Delegates query execution to storage repository implementation.
+- Returns instances ordered by creation sequence.
+
+### Example
+
+```php
+$instances = Workflow::getInstancesForSubject(
+	['subject_type' => App\Models\Solicitud::class, 'subject_id' => '123'],
+	workflowName: 'termination_request'
+);
+```
 
 ## Context Contract
 

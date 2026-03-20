@@ -71,6 +71,19 @@ Optional per effect:
 - any
 - not
 
+### fn args
+
+Rules using `fn` may provide optional `args` as array values.
+
+Example:
+
+```yaml
+allowed_if:
+  fn: subject_type_matches
+  args:
+    - App\\Models\\Solicitud
+```
+
 ## Validation Semantics
 
 - `initial_state` must belong to `states`.
@@ -79,7 +92,10 @@ Optional per effect:
 - `from` and `to` must belong to `states`.
 - Duplicate `(from, action)` transitions are rejected.
 - Referenced function names in `fn` must exist in function registry.
+- `args` must be an array when present.
 - This `fn` validation applies to `allowed_if`, `fields.visible_if`, and `fields.editable_if`.
+- `subject_type_matches` requires `args[0]` as non-empty expected subject type.
+- `is_subject_owner` accepts optional `args[0]` as non-empty context key for actor id (`actor_id` by default).
 - `mappings` must be an array object keyed by field name.
 - Mapping type must be one of `attribute`, `attach`, `relation`, `custom`.
 - Mapping-specific required keys (`target`, `handler`) are validated.

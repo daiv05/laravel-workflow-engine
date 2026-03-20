@@ -84,4 +84,21 @@ class RuleEngineContextTest extends TestCase
 
         $this->assertTrue($result);
     }
+
+    public function test_it_passes_args_to_registered_function_rules(): void
+    {
+        $functions = new FunctionRegistry();
+        $functions->register('matchesActor', static function (array $context, string $expected): bool {
+            return (string) ($context['actor_id'] ?? '') === $expected;
+        });
+
+        $engine = new RuleEngine($functions);
+
+        $this->assertTrue($engine->evaluate([
+            'fn' => 'matchesActor',
+            'args' => ['42'],
+        ], [
+            'actor_id' => 42,
+        ]));
+    }
 }

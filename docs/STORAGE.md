@@ -47,6 +47,11 @@ Main fields:
 - created_at
 - updated_at
 
+Optional subject association fields:
+
+- subject_type (nullable)
+- subject_id (nullable)
+
 ## workflow_histories
 
 Main fields:
@@ -124,3 +129,23 @@ Engine-level in-memory cache stores:
 - definitions by definition id
 
 Cache is invalidated on new version activation for the same scope.
+
+## Optional Single Active Instance Enforcement
+
+When `workflow.enforce_one_active_per_subject` is enabled, the engine prevents creating a second active instance for the same:
+
+- tenant_id
+- workflow_name
+- subject_type
+- subject_id
+
+Active is evaluated with workflow definition terminal states:
+
+- active state = current state is not in `final_states`
+
+Implementation notes:
+
+- Guard is applied in engine start flow before persistence.
+- Check and create execute inside repository transaction to reduce race windows.
+- Database-level unique constraints are not yet uniformly available across all supported drivers.
+- On drivers without filtered/partial unique index support, enforcement remains application-level.

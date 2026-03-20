@@ -46,5 +46,7 @@ return [
         'prefix' => 'workflow.diagnostic.',
     ],
 
+    'enforce_one_active_per_subject' => false,
+
     'multi_tenant' => false,
 ];

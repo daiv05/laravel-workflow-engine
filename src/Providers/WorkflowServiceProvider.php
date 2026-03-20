@@ -23,6 +23,7 @@ use Daiv05\LaravelWorkflowEngine\Diagnostics\LaravelDiagnosticsEmitter;
 use Daiv05\LaravelWorkflowEngine\Diagnostics\NullDiagnosticsEmitter;
 use Daiv05\LaravelWorkflowEngine\Fields\FieldEngine;
 use Daiv05\LaravelWorkflowEngine\Functions\FunctionRegistry;
+use Daiv05\LaravelWorkflowEngine\Functions\SubjectRuleFunctions;
 use Daiv05\LaravelWorkflowEngine\Policies\PolicyEngine;
 use Daiv05\LaravelWorkflowEngine\Outbox\OutboxProcessor;
 use Daiv05\LaravelWorkflowEngine\Rules\RuleEngine;
@@ -41,7 +42,13 @@ class WorkflowServiceProvider extends ServiceProvider
     {
         $this->mergeConfigFrom(__DIR__ . '/../../config/workflow.php', 'workflow');
 
-        $this->app->singleton(FunctionRegistry::class, static fn () => new FunctionRegistry());
+        $this->app->singleton(FunctionRegistry::class, static function () {
+            $registry = new FunctionRegistry();
+            $registry->register('subject_type_matches', [SubjectRuleFunctions::class, 'subjectTypeMatches']);
+            $registry->register('is_subject_owner', [SubjectRuleFunctions::class, 'isSubjectOwner']);
+
+            return $registry;
+        });
         $this->app->alias(FunctionRegistry::class, FunctionRegistryInterface::class);
 
         $this->app->singleton(Parser::class, static fn () => new Parser());
@@ -149,7 +156,8 @@ class WorkflowServiceProvider extends ServiceProvider
                 (bool) $app['config']->get('workflow.cache.enabled', true),
                 (int) $app['config']->get('workflow.cache.ttl', 300),
                 $app->make(DataMapperInterface::class),
-                $defaultTenantId
+                $defaultTenantId,
+                (bool) $app['config']->get('workflow.enforce_one_active_per_subject', false)
             );
         });
 

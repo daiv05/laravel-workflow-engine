@@ -174,4 +174,157 @@ class InMemoryWorkflowRepository implements StorageRepositoryInterface
     {
         return $this->activeKey($workflowName, $tenantId) . '::v' . $version;
     }
+
+    /**
+     * @param array<string, string> $subjectRef
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getLatestInstanceForSubject(string $workflowName, array $subjectRef, ?string $tenantId = null): ?array
+    {
+        $latest = null;
+        $latestCreatedAt = null;
+
+        foreach ($this->instancesById as $instance) {
+            if (($instance['subject_type'] ?? null) !== ($subjectRef['subject_type'] ?? null)) {
+                continue;
+            }
+
+            if (($instance['subject_id'] ?? null) !== ($subjectRef['subject_id'] ?? null)) {
+                continue;
+            }
+
+            $definitionId = $instance['workflow_definition_id'] ?? null;
+            if ($definitionId === null || !isset($this->definitionsById[$definitionId])) {
+                continue;
+            }
+
+            $definition = $this->definitionsById[$definitionId];
+            if (($definition['workflow_name'] ?? null) !== $workflowName) {
+                continue;
+            }
+
+            $instanceTenantId = $instance['tenant_id'] ?? null;
+            if ($tenantId === null && $instanceTenantId !== null) {
+                continue;
+            }
+
+            if ($tenantId !== null && $instanceTenantId !== $tenantId) {
+                continue;
+            }
+
+            $createdAt = $instance['created_at'] ?? '0000-00-00T00:00:00+00:00';
+            if ($latestCreatedAt === null || $createdAt > $latestCreatedAt) {
+                $latestCreatedAt = $createdAt;
+                $latest = $instance;
+            }
+        }
+
+        return $latest;
+    }
+
+    /**
+     * @param array<string, string> $subjectRef
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getInstancesForSubject(array $subjectRef, ?string $tenantId = null, ?string $workflowName = null): array
+    {
+        $result = [];
+
+        foreach ($this->instancesById as $instance) {
+            if (($instance['subject_type'] ?? null) !== ($subjectRef['subject_type'] ?? null)) {
+                continue;
+            }
+
+            if (($instance['subject_id'] ?? null) !== ($subjectRef['subject_id'] ?? null)) {
+                continue;
+            }
+
+            $instanceTenantId = $instance['tenant_id'] ?? null;
+            if ($tenantId === null && $instanceTenantId !== null) {
+                continue;
+            }
+
+            if ($tenantId !== null && $instanceTenantId !== $tenantId) {
+                continue;
+            }
+
+            if ($workflowName !== null) {
+                $definitionId = $instance['workflow_definition_id'] ?? null;
+                if ($definitionId === null || !isset($this->definitionsById[$definitionId])) {
+                    continue;
+                }
+
+                $definition = $this->definitionsById[$definitionId];
+                if (($definition['workflow_name'] ?? null) !== $workflowName) {
+                    continue;
+                }
+            }
+
+            $result[] = $instance;
+        }
+
+        usort($result, fn ($a, $b) => strcmp($a['created_at'] ?? '0000-00-00', $b['created_at'] ?? '0000-00-00'));
+
+        return $result;
+    }
+
+    /**
+     * @param array<string, string> $subjectRef
+     * @param array<int, string> $finalStates
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getLatestActiveInstanceForSubject(
+        string $workflowName,
+        array $subjectRef,
+        array $finalStates,
+        ?string $tenantId = null
+    ): ?array {
+        $latest = null;
+        $latestCreatedAt = null;
+
+        foreach ($this->instancesById as $instance) {
+            if (($instance['subject_type'] ?? null) !== ($subjectRef['subject_type'] ?? null)) {
+                continue;
+            }
+
+            if (($instance['subject_id'] ?? null) !== ($subjectRef['subject_id'] ?? null)) {
+                continue;
+            }
+
+            $instanceTenantId = $instance['tenant_id'] ?? null;
+            if ($tenantId === null && $instanceTenantId !== null) {
+                continue;
+            }
+
+            if ($tenantId !== null && $instanceTenantId !== $tenantId) {
+                continue;
+            }
+
+            $definitionId = $instance['workflow_definition_id'] ?? null;
+            if ($definitionId === null || !isset($this->definitionsById[$definitionId])) {
+                continue;
+            }
+
+            $definition = $this->definitionsById[$definitionId];
+            if (($definition['workflow_name'] ?? null) !== $workflowName) {
+                continue;
+            }
+
+            $state = is_string($instance['state'] ?? null) ? $instance['state'] : '';
+            if ($state !== '' && in_array($state, $finalStates, true)) {
+                continue;
+            }
+
+            $createdAt = $instance['created_at'] ?? '0000-00-00T00:00:00+00:00';
+            if ($latestCreatedAt === null || $createdAt > $latestCreatedAt) {
+                $latestCreatedAt = $createdAt;
+                $latest = $instance;
+            }
+        }
+
+        return $latest;
+    }
 }

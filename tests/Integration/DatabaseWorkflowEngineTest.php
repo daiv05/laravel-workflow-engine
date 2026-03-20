@@ -66,7 +66,12 @@ class DatabaseWorkflowEngineTest extends TestCase
             $table->string('state');
             $table->json('data');
             $table->unsignedInteger('version')->default(0);
+            $table->string('subject_type')->nullable();
+            $table->string('subject_id')->nullable();
             $table->timestamps();
+
+            $table->index(['tenant_id', 'subject_type', 'subject_id'], 'wf_instance_subject_lookup_idx');
+            $table->index(['workflow_definition_id', 'subject_type', 'subject_id'], 'wf_instance_definition_subject_idx');
         });
 
         $schema->create('workflow_histories', function (Blueprint $table): void {

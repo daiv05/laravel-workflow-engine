@@ -25,11 +25,22 @@ allowed_if:
 
 Calls a registered function from the function registry.
 
+`fn` optionally supports `args`.
+
 ### Example
 
 ```yaml
 allowed_if:
   fn: isHR
+```
+
+### Example with args
+
+```yaml
+allowed_if:
+  fn: subject_type_matches
+  args:
+    - App\\Models\\Solicitud
 ```
 
 ## all
@@ -75,6 +86,33 @@ allowed_if:
 For role-based rules, context must include:
 
 - roles: array
+
+When an instance has subject association, rule context also includes:
+
+- subject.subject_type: string
+- subject.subject_id: string
+
+Instance subject values are injected by the engine for `can`, `availableActions`, and `visibleFields`.
+
+## Built-in Subject Functions
+
+The package registers these helpers by default:
+
+- `subject_type_matches(expectedType)`
+- `is_subject_owner(actorIdKey = "actor_id")`
+
+Examples:
+
+```yaml
+allowed_if:
+  all:
+    - fn: subject_type_matches
+      args:
+        - App\\Models\\Solicitud
+    - fn: is_subject_owner
+      args:
+        - actor_id
+```
 
 Nested rule trees are validated recursively for required context keys.
 

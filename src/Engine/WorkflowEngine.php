@@ -10,6 +10,7 @@ use Daiv05\LaravelWorkflowEngine\Contracts\WorkflowEngineInterface;
 use Daiv05\LaravelWorkflowEngine\DSL\Compiler;
 use Daiv05\LaravelWorkflowEngine\DSL\Parser;
 use Daiv05\LaravelWorkflowEngine\DSL\Validator;
+use Daiv05\LaravelWorkflowEngine\Exceptions\ActiveSubjectInstanceExistsException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\MappingException;
 use Daiv05\LaravelWorkflowEngine\Fields\FieldEngine;
 use Daiv05\LaravelWorkflowEngine\Functions\FunctionRegistry;
@@ -38,7 +39,8 @@ class WorkflowEngine implements WorkflowEngineInterface
         private readonly bool $cacheEnabled = true,
         private readonly int $cacheTtl = 300,
         private readonly ?DataMapperInterface $dataMapper = null,
-        private readonly string $defaultTenantId = 'tenant-default'
+        private readonly string $defaultTenantId = 'tenant-default',
+        private readonly bool $enforceOneActivePerSubject = false
     ) {
     }
 
@@ -51,6 +53,7 @@ class WorkflowEngine implements WorkflowEngineInterface
     {
         $tenantId = $this->resolveTenantId();
         $definition = $this->getActiveDefinitionCached($workflowName, $tenantId);
+        $normalizedSubject = null;
 
         $instance = [
             'instance_id' => $this->uuidV4(),
@@ -63,7 +66,50 @@ class WorkflowEngine implements WorkflowEngineInterface
             'updated_at' => date(DATE_ATOM),
         ];
 
-        return $this->storage->createInstance($instance);
+        if (array_key_exists('subject', $options) && is_array($options['subject'])) {
+            $normalizedSubject = SubjectNormalizer::normalize($options['subject']);
+            $instance['subject_type'] = $normalizedSubject['subject_type'];
+            $instance['subject_id'] = $normalizedSubject['subject_id'];
+        }
+
+        if (!$this->enforceOneActivePerSubject || $normalizedSubject === null) {
+            return $this->storage->createInstance($instance);
+        }
+
+        $finalStates = [];
+        if (isset($definition['final_states']) && is_array($definition['final_states'])) {
+            $finalStates = array_values(array_filter($definition['final_states'], static fn ($state): bool => is_string($state) && $state !== ''));
+        }
+
+        return $this->storage->transaction(function () use ($workflowName, $normalizedSubject, $tenantId, $finalStates, $instance): array {
+            $existing = $this->storage->getLatestActiveInstanceForSubject($workflowName, $normalizedSubject, $finalStates, $tenantId);
+
+            if ($existing !== null) {
+                throw ActiveSubjectInstanceExistsException::forSubject(
+                    $workflowName,
+                    $normalizedSubject,
+                    isset($existing['instance_id']) && is_string($existing['instance_id']) ? $existing['instance_id'] : null,
+                    $tenantId
+                );
+            }
+
+            try {
+                return $this->storage->createInstance($instance);
+            } catch (\Throwable $exception) {
+                if (!$this->isUniqueConstraintViolation($exception)) {
+                    throw $exception;
+                }
+
+                $freshExisting = $this->storage->getLatestActiveInstanceForSubject($workflowName, $normalizedSubject, $finalStates, $tenantId);
+
+                throw ActiveSubjectInstanceExistsException::forSubject(
+                    $workflowName,
+                    $normalizedSubject,
+                    isset($freshExisting['instance_id']) && is_string($freshExisting['instance_id']) ? $freshExisting['instance_id'] : null,
+                    $tenantId
+                );
+            }
+        });
     }
 
     /**
@@ -102,6 +148,7 @@ class WorkflowEngine implements WorkflowEngineInterface
     {
         $instance = $this->storage->getInstance($instanceId);
         $definition = $this->getDefinitionByIdCached((int) $instance['workflow_definition_id']);
+        $contextWithSubject = $this->contextWithSubject($instance, $context);
 
         $transition = $this->stateMachine->transitionFor($definition, (string) $instance['state'], $action);
         if ($transition === null) {
@@ -110,7 +157,7 @@ class WorkflowEngine implements WorkflowEngineInterface
 
         // can() answers "is this executable now by this actor" without mutating state.
         try {
-            return $this->policy->canExecuteTransition($transition, $context);
+            return $this->policy->canExecuteTransition($transition, $contextWithSubject);
         } catch (\Throwable) {
             return false;
         }
@@ -125,6 +172,7 @@ class WorkflowEngine implements WorkflowEngineInterface
     {
         $instance = $this->storage->getInstance($instanceId);
         $definition = $this->getDefinitionByIdCached((int) $instance['workflow_definition_id']);
+        $contextWithSubject = $this->contextWithSubject($instance, $context);
 
         if ($this->stateMachine->isFinalState($definition, (string) $instance['state'])) {
             return [];
@@ -142,7 +190,7 @@ class WorkflowEngine implements WorkflowEngineInterface
             }
 
             $action = isset($transition['action']) && is_string($transition['action']) ? $transition['action'] : 'unknown';
-            $result[$action] = $this->fieldEngine->fieldsForTransition($transition, $context);
+            $result[$action] = $this->fieldEngine->fieldsForTransition($transition, $contextWithSubject);
         }
 
         return $result;
@@ -157,6 +205,7 @@ class WorkflowEngine implements WorkflowEngineInterface
     {
         $instance = $this->storage->getInstance($instanceId);
         $definition = $this->getDefinitionByIdCached((int) $instance['workflow_definition_id']);
+        $contextWithSubject = $this->contextWithSubject($instance, $context);
 
         if ($this->stateMachine->isFinalState($definition, (string) $instance['state'])) {
             return [];
@@ -179,7 +228,7 @@ class WorkflowEngine implements WorkflowEngineInterface
             }
 
             try {
-                if ($this->policy->canExecuteTransition($transition, $context)) {
+                if ($this->policy->canExecuteTransition($transition, $contextWithSubject)) {
                     $actions[] = $action;
                 }
             } catch (\Throwable) {
@@ -196,6 +245,32 @@ class WorkflowEngine implements WorkflowEngineInterface
     public function history(string $instanceId): array
     {
         return $this->storage->getHistory($instanceId);
+    }
+
+    /**
+     * @param array<string, mixed> $subjectRef
+     *
+     * @return array<string, mixed>|null
+     */
+    public function getLatestInstanceForSubject(string $workflowName, array $subjectRef, ?string $tenantId = null): ?array
+    {
+        $resolvedTenantId = $tenantId ?? $this->resolveTenantId();
+        $normalizedSubject = SubjectNormalizer::normalize($subjectRef);
+
+        return $this->storage->getLatestInstanceForSubject($workflowName, $normalizedSubject, $resolvedTenantId);
+    }
+
+    /**
+     * @param array<string, mixed> $subjectRef
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function getInstancesForSubject(array $subjectRef, ?string $tenantId = null, ?string $workflowName = null): array
+    {
+        $resolvedTenantId = $tenantId ?? $this->resolveTenantId();
+        $normalizedSubject = SubjectNormalizer::normalize($subjectRef);
+
+        return $this->storage->getInstancesForSubject($normalizedSubject, $resolvedTenantId, $workflowName);
     }
 
     /**
@@ -347,6 +422,29 @@ class WorkflowEngine implements WorkflowEngineInterface
     }
 
     /**
+     * @param array<string, mixed> $instance
+     * @param array<string, mixed> $context
+     *
+     * @return array<string, mixed>
+     */
+    private function contextWithSubject(array $instance, array $context): array
+    {
+        $subjectType = $instance['subject_type'] ?? null;
+        $subjectId = $instance['subject_id'] ?? null;
+
+        if (!is_string($subjectType) || $subjectType === '' || !is_string($subjectId) || $subjectId === '') {
+            return $context;
+        }
+
+        $context['subject'] = [
+            'subject_type' => $subjectType,
+            'subject_id' => $subjectId,
+        ];
+
+        return $context;
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function getActiveDefinitionCached(string $workflowName, ?string $tenantId): array
@@ -447,5 +545,21 @@ class WorkflowEngine implements WorkflowEngineInterface
         }
 
         $this->cache->put($key, $value, $this->cacheTtl);
+    }
+
+    private function isUniqueConstraintViolation(\Throwable $exception): bool
+    {
+        $code = (string) $exception->getCode();
+        $message = strtolower($exception->getMessage());
+
+        if ($code === '23000' || $code === '23505') {
+            return true;
+        }
+
+        if (str_contains($message, 'duplicate') || str_contains($message, 'unique')) {
+            return true;
+        }
+
+        return false;
     }
 }

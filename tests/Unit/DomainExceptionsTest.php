@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Daiv05\LaravelWorkflowEngine\Tests\Unit;
 
+use Daiv05\LaravelWorkflowEngine\Exceptions\ActiveSubjectInstanceExistsException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\ContextValidationException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\DSLValidationException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\FunctionNotFoundException;
@@ -120,5 +121,28 @@ class DomainExceptionsTest extends TestCase
         $this->assertSame(7001, $diagnostic['exception_code']);
         $this->assertSame('base error', $diagnostic['exception_message']);
         $this->assertSame(['instance_id' => 'iid-1'], $diagnostic['context']);
+    }
+
+    public function test_active_subject_instance_exists_factory_sets_context_and_code(): void
+    {
+        $exception = ActiveSubjectInstanceExistsException::forSubject(
+            'approval',
+            ['subject_type' => 'App\\Models\\Order', 'subject_id' => '123'],
+            'iid-existing',
+            'tenant-default'
+        );
+
+        $this->assertSame(7002, $exception->getCode());
+        $this->assertSame('An active instance of approval already exists for this subject', $exception->getMessage());
+        $this->assertSame(
+            [
+                'workflow_name' => 'approval',
+                'subject_type' => 'App\\Models\\Order',
+                'subject_id' => '123',
+                'existing_instance_id' => 'iid-existing',
+                'tenant_id' => 'tenant-default',
+            ],
+            $exception->context()
+        );
     }
 }

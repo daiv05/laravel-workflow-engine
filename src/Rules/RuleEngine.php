@@ -35,7 +35,11 @@ class RuleEngine implements RuleEngineInterface
 
         if (isset($rule['fn'])) {
             $function = $this->functions->get((string) $rule['fn']);
-            return (bool) $function($context);
+            $args = isset($rule['args']) && is_array($rule['args'])
+                ? array_values($rule['args'])
+                : [];
+
+            return (bool) $function($context, ...$args);
         }
 
         if (isset($rule['all'])) {
