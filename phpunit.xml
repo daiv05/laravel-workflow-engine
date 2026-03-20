@@ -1,11 +1,36 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<phpunit bootstrap="vendor/autoload.php" colors="true">
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/11.5/phpunit.xsd"
+         bootstrap="vendor/autoload.php"
+         colors="true"
+         cacheDirectory=".phpunit.cache">
     <testsuites>
         <testsuite name="Unit">
-            <directory>tests/Unit</directory>
+            <directory suffix=".php">tests/Unit</directory>
         </testsuite>
         <testsuite name="Integration">
-            <directory>tests/Integration</directory>
+            <directory suffix=".php">tests/Integration</directory>
         </testsuite>
     </testsuites>
+
+    <source>
+        <include>
+            <directory suffix=".php">src</directory>
+        </include>
+        <exclude>
+            <directory suffix=".php">tests</directory>
+        </exclude>
+    </source>
+
+    <coverage includeUncoveredFiles="true">
+        <report>
+            <text outputFile="php://stdout" showUncoveredFiles="false"/>
+            <clover outputFile="build/logs/clover.xml"/>
+            <html outputDirectory="build/coverage"/>
+        </report>
+    </coverage>
+
+    <php>
+        <env name="XDEBUG_MODE" value="coverage"/>
+    </php>
 </phpunit>
