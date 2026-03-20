@@ -38,12 +38,22 @@ class WorkflowException extends RuntimeException
 	 */
 	public function withContext(array $context): static
 	{
-		return new static(
+		return $this->newWith(
 			$this->getMessage(),
 			$this->getCode(),
 			$this->getPrevious(),
 			array_merge($this->context, $context)
 		);
+	}
+
+	/**
+	 * Hook for subclasses that keep extra state outside constructor args.
+	 *
+	 * @param array<string, mixed> $context
+	 */
+	protected function newWith(string $message, int $code, ?Throwable $previous, array $context): static
+	{
+		return new static($message, $code, $previous, $context);
 	}
 
 	/**

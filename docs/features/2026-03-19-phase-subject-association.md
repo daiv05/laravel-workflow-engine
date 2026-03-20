@@ -106,14 +106,9 @@ Injected shape:
 
 This keeps API signatures unchanged while enabling subject-aware authorization and field rules.
 
-**Built-in Rule Helpers**
-File: [src/Functions/SubjectRuleFunctions.php](../src/Functions/SubjectRuleFunctions.php)
+**Rule Helpers Strategy**
 
-Registered by default in package container wiring:
-- `subject_type_matches(expectedType)`
-- `is_subject_owner(actorIdKey = "actor_id")`
-
-These helpers are available in `allowed_if`, `fields.visible_if`, and `fields.editable_if`.
+Subject-aware helpers can be implemented as custom registered functions and used in `allowed_if`, `fields.visible_if`, and `fields.editable_if`.
 
 **Updated Facade**
 File: [src/Facades/Workflow.php](../src/Facades/Workflow.php)
@@ -211,23 +206,24 @@ Workflow::getInstancesForSubject($subjectRef, workflowName: 'workflow');
 ## Testing Summary
 
 ### Unit
-- ✅ SubjectNormalizer: valid inputs, all error cases
-- ✅ Backward compatibility (subject optional)
-- ✅ Subject rule helpers: subject type and subject owner checks
-- ✅ DSL validation for subject helper args
+- SubjectNormalizer: valid inputs, all error cases
+- Backward compatibility (subject optional)
+- Subject rule helpers: subject type and subject owner checks
+- DSL validation for subject helper args
 
 ### Integration
-- ✅ Persist subject on start
-- ✅ Latest instance lookup by workflow and subject
-- ✅ Query all instances for subject
-- ✅ Filter by workflow name
-- ✅ Engine subject query convenience methods
-- ✅ Reject duplicate active instance for same subject when enforcement is enabled
-- ✅ Allow new instance for same subject after previous reaches final state
-- ✅ Invalid subject reference fails with clear error
-- ✅ Subject-aware `can()` and `availableActions()`
-- ✅ Subject-aware `visibleFields()` visibility/editability projection
-- ✅ Subject included in workflow event payloads (`instance_started`, transition effects, and `transition_failed`)
+- Persist subject on start
+- Latest instance lookup by workflow and subject
+- Query all instances for subject
+- Filter by workflow name
+- Engine subject query convenience methods
+- Reject duplicate active instance for same subject when enforcement is enabled
+- Allow new instance for same subject after previous reaches final state
+- Invalid subject reference fails with clear error
+- Subject-aware `can()` and `availableActions()`
+- Subject-aware `visibleFields()` visibility/editability projection
+- Subject included in workflow event payloads (`instance_started`, transition effects, and `transition_failed`) at implementation level
+- Explicit integration assertions for `subject` inside event payloads are pending (event emission is covered; payload subject keys are not yet asserted in dedicated tests)
 
 ## Design Decisions Reflected
 
@@ -263,6 +259,14 @@ Payload shape when subject exists:
 - Observers can update domain projections directly from event payloads.
 - Prevents extra reads to `workflow_instances` just to recover subject context.
 - Keeps event handling simpler and more deterministic.
+
+## Update (2026-03-20)
+
+Documentation alignment correction for event payload coverage:
+
+- Subject propagation in event payloads is implemented in engine code.
+- Existing integration tests validate event emission and names for these paths.
+- Dedicated integration assertions that validate `payload.subject.subject_type` and `payload.subject.subject_id` for `instance_started`, transition effect events, and `transition_failed` remain pending.
 
 
 ## Migration Notes

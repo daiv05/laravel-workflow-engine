@@ -25,9 +25,11 @@ Implemented modules:
 
 ## Constraints and Notes
 
-- Active-definition uniqueness is currently enforced at repository activation logic and indexed lookup; strict partial unique constraints differ by database engine and are not forced as a universal migration constraint.
+- Active-definition uniqueness is currently enforced at repository activation logic and indexed lookup.
+- Follow-up note (added later): a strict uniqueness guard was introduced via `workflow_definitions.active_scope` unique index in the migration path, while keeping activation logic checks in the repository.
 - The migration stores full compiled definition JSON in `workflow_definitions.definition`.
 - SQL repository currently targets Laravel's query builder connection API.
+- The `workflow.storage.*_table` config keys are present for forward compatibility; dynamic table-name resolution is intentionally deferred to a dedicated future feature.
 
 ## Changed Files
 

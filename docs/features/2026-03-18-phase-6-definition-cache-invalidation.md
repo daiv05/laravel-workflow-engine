@@ -35,3 +35,9 @@ Implemented updates:
 
 - Cache is process-local (in-memory) and intended as baseline optimization.
 - Distributed cache invalidation remains future work for multi-node deployments.
+
+## Status Note (2026-03-20)
+
+- As of today, tenant handling at `WorkflowEngine` level remains static by design (resolved from configured default tenant).
+- Extra comment: dynamic tenant resolution at engine entry points is still planned functionality and is not enabled yet.
+- Explanation: cache key shape supports `(workflow, tenant, version)`, but with static tenant mode active, effective runtime scoping uses the configured tenant until dynamic tenant mode is implemented.

@@ -27,6 +27,17 @@ Calls a registered function from the function registry.
 
 `fn` optionally supports `args`.
 
+Registration model:
+
+- Functions must be registered by the host application (or package integrator) before DSL validation/activation.
+
+Invocation contract:
+
+- Runtime call shape is `fn(context, ...args)`.
+- `context` is always the first argument.
+- `args` is optional; when omitted, it is treated as an empty array.
+- Validator enforces `args` is an array when present.
+
 ### Example
 
 ```yaml
@@ -38,7 +49,7 @@ allowed_if:
 
 ```yaml
 allowed_if:
-  fn: subject_type_matches
+  fn: matchesSubjectType
   args:
     - App\\Models\\Solicitud
 ```
@@ -94,22 +105,28 @@ When an instance has subject association, rule context also includes:
 
 Instance subject values are injected by the engine for `can`, `availableActions`, and `visibleFields`.
 
-## Built-in Subject Functions
+For transition execution (`execute`), context is passed as provided by caller.
 
-The package registers these helpers by default:
+If a rule uses `role`, `context.roles` must exist and be an array; otherwise evaluation raises context validation errors.
 
-- `subject_type_matches(expectedType)`
-- `is_subject_owner(actorIdKey = "actor_id")`
+## Subject-Aware Custom Functions
+
+Subject-aware rules should be implemented as regular custom functions registered by the host application.
+
+Example strategy:
+
+- `matchesSubjectType(expectedType)`
+- `matchesSubjectOwner(actorIdKey = "actor_id")`
 
 Examples:
 
 ```yaml
 allowed_if:
   all:
-    - fn: subject_type_matches
+    - fn: matchesSubjectType
       args:
         - App\\Models\\Solicitud
-    - fn: is_subject_owner
+    - fn: matchesSubjectOwner
       args:
         - actor_id
 ```

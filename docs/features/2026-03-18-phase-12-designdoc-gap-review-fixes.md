@@ -10,6 +10,7 @@ This phase addresses high-priority gaps discovered during a DesignDoc V2 review 
 
 - Updated `WorkflowException::withContext` to avoid cloning exceptions (PHP exceptions are not cloneable).
 - `withContext` now returns a new exception instance with merged context.
+- Base behavior is correct for constructor-only exception state.
 
 Why:
 - Unit test `DomainExceptionsTest::test_workflow_exception_can_merge_context_without_mutating_original` exposed a runtime error caused by `clone`.
@@ -57,3 +58,18 @@ This phase strengthens alignment with:
 
 - Full package test execution is pending in the user runtime environment.
 - Additional edge-path tests can still be added for mixed nested operators inside field rules (`all/any/not`) with invalid node structures.
+
+## Post-Review Follow-up Implemented (2026-03-20)
+
+- Added a protected instantiation hook in `WorkflowException` used by `withContext`.
+- Overrode the hook in `DSLValidationException` to preserve `nodePath` metadata.
+- Added regression test `DomainExceptionsTest::test_dsl_validation_with_context_preserves_node_path_metadata`.
+
+Result:
+
+- The subclass metadata propagation issue for `withContext` is now mitigated for `DSLValidationException`.
+
+## Follow-up Plan
+
+1. Extend the same pattern to any future exception subclass that keeps extra state outside constructor arguments.
+2. Keep focused regression tests whenever subclass-specific metadata is introduced.

@@ -29,6 +29,12 @@ Implemented updates:
 - Immutable instance-to-definition linkage remains unchanged.
 - Optimistic locking behavior is validated in integration tests.
 
+## Status Note (2026-03-20)
+
+- As of today, tenant handling at `WorkflowEngine` level remains static by design (resolved from configured default tenant).
+- Extra comment: dynamic tenant resolution at engine entry points is still planned functionality and is not enabled yet.
+- Explanation: the per-tenant active-scope enforcement described in this phase is implemented and validated at repository/database level; engine-level tenant input is currently not used for activation scope selection.
+
 ## Test Coverage Added
 
 - Integration test: activate definition V1 then V2 for same scope, assert V2 is active.

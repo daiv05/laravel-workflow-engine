@@ -36,6 +36,18 @@ class DomainExceptionsTest extends TestCase
         $this->assertSame(['node_path' => 'dsl_version'], $exception->context());
     }
 
+    public function test_dsl_validation_with_context_preserves_node_path_metadata(): void
+    {
+        $exception = DSLValidationException::withPath('Missing required key: dsl_version', 'dsl_version');
+        $enriched = $exception->withContext(['request_id' => 'req-123']);
+
+        $this->assertSame('dsl_version', $enriched->nodePath());
+        $this->assertSame(
+            ['node_path' => 'dsl_version', 'request_id' => 'req-123'],
+            $enriched->context()
+        );
+    }
+
     public function test_dsl_validation_malformed_uses_specific_code(): void
     {
         $exception = DSLValidationException::malformed('Malformed DSL');

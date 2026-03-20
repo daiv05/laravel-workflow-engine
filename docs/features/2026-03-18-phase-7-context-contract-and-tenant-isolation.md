@@ -27,6 +27,18 @@ Implemented updates:
 - Strengthens the minimal context contract requirement.
 - Reinforces one active definition per `(workflow_name, tenant_id)` behavior from an engine consumer perspective.
 
+## Current Status Note (As of 2026-03-20)
+
+- Runtime tenant resolution at `WorkflowEngine` entry points is currently static.
+- Tenant scope is forced by configured `workflow.default_tenant_id`.
+- Incoming tenant values in `start(...)` and `activateDefinition(...)` are intentionally ignored in the current implementation.
+
+## Planned Evolution
+
+- Introduce dynamic tenant resolution strategy at engine entry points.
+- Add explicit tenant-scoped engine APIs (for example, fluent tenant context selection) while preserving backward compatibility.
+- Expand integration coverage to validate true runtime per-tenant engine behavior once dynamic resolution is enabled.
+
 ## Test Coverage Added
 
 - Unit: context validation error paths for role-based rules.

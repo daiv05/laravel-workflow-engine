@@ -48,5 +48,6 @@ return [
 
     'enforce_one_active_per_subject' => false,
 
+    // Global toggle reserved for the future multi-tenant feature rollout.
     'multi_tenant' => false,
 ];

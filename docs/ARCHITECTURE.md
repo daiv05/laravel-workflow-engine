@@ -1,86 +1,330 @@
 # Architecture
 
-## Layer Boundaries
+This document explains how the engine works today, based on the current implementation.
 
-The package is organized by explicit layers with strict responsibilities:
+Goal: be simple enough for first-time contributors while still precise for maintainers.
 
-- DSL: parsing, validation, compilation.
-- Rules: condition evaluation.
-- Policies: transition authorization.
-- Fields: dynamic visibility/editability decisions.
-- Engine: orchestration of workflow lifecycle and transition execution.
-- DataMapping: mapping input payloads into instance snapshot and external handlers.
-- Functions: controlled function registration and lookup.
-- Events: event queueing and post-commit dispatch.
-- Storage: persistence for definitions, instances, history, and outbox.
+## 1. Big Picture
 
-## Core Execution Flow
+Think of this package as a traffic controller for state changes:
 
-1. Load active definition by workflow + tenant.
-2. Resolve transition from current state + action.
-3. Evaluate authorization/rules.
-4. Execute transactional update:
-- validate mapping context contract when transition has `mappings`,
-- apply `DataMapper` to `context.data`,
-- state/version mutation,
-- history append,
-- event queueing (and outbox insert for DB mode).
-5. After successful commit, flush event dispatch.
+1. A workflow definition says what transitions are allowed.
+2. An instance stores current state and data.
+3. `execute()` tries one action.
+4. Rules/policies decide if action is allowed now.
+5. If allowed, state changes in a transaction.
+6. History and events are recorded.
 
-## Mapping Read Path
+```mermaid
+flowchart LR
+	A[Client code] --> B[WorkflowEngine]
+	B --> C[DSL: Parser + Validator + Compiler]
+	B --> D[StateMachine]
+	B --> E[PolicyEngine + RuleEngine]
+	B --> F[TransitionExecutor]
+	F --> G[StorageRepository]
+	F --> H[DataMapper]
+	F --> I[Event Dispatcher]
+	I --> J[Laravel Events]
+	I --> K[Outbox Store]
+```
 
-- Write path: transition execution applies `mappings` through `DataMapper`.
-- Read path: engine resolves mapped fields through `resolveMappedData(instanceId, action)`.
-- `attribute`: returned from `workflow_instances.data`.
-- `attach` and `relation`: resolved through binding query handlers when configured.
-- `custom`: resolved by custom handlers implementing query contract.
+## 2. Public API Surface
 
-## Data Consistency Model
+Primary API methods (stable contract):
 
-- Optimistic locking via instance `version`.
-- One active definition per `(workflow_name, tenant_id)` scope.
-- Immutable `workflow_definition_id` binding per instance.
-- Transaction-based transition side effects.
+- `start(workflowName, options)`
+- `can(instanceId, action, context)`
+- `execute(instanceId, action, context)`
+- `visibleFields(instanceId, context)`
 
-## Caching Model
+Also available:
 
-Definition cache layers:
+- `availableActions(instanceId, context)`
+- `history(instanceId)`
+- `resolveMappedData(instanceId, action, context, options)`
+- `activateDefinition(workflowName, definition, tenantId?)`
+- `execution(instanceId?)` for execution-scoped hooks/listeners
 
-- Process-local cache in engine.
-- Optional shared Laravel cache store.
+## 3. Layer Responsibilities
 
-Invalidation:
+- DSL layer (`Parser`, `Validator`, `Compiler`): reads DSL, validates constraints, creates `transition_index`.
+- Rules layer (`RuleEngine`, `ContextValidator`): evaluates `role`, `fn`, `all`, `any`, `not` safely.
+- Policies layer (`PolicyEngine`): applies `allowed_if` per transition.
+- Fields layer (`FieldEngine`): computes `visible` and `editable` field lists with rule guards.
+- Engine layer (`WorkflowEngine`, `StateMachine`, `TransitionExecutor`, `ExecutionBuilder`): orchestration and lifecycle.
+- DataMapping layer (`DataMapper`): input write mapping and read-time resolution.
+- Functions layer (`FunctionRegistry`): whitelist for callable functions used by rules.
+- Events layer (`Dispatcher`): queue + flush semantics, optional outbox persistence.
+- Storage layer (`DatabaseWorkflowRepository`, `InMemoryWorkflowRepository`): definitions, instances, history, transactions.
 
-- Activating a new definition invalidates active scope cache pointer and stale version entry.
+## 4. Definition Lifecycle
 
-## Event Delivery Model
+When `activateDefinition()` is called:
 
-- Events are queued during transaction.
-- Execution-scoped inline listeners can be attached through `ExecutionBuilder`.
-- Inline listeners are invoked per emitted effect event before global event dispatch.
-- Queue is flushed after commit.
-- In database mode, queued events are persisted to outbox table before commit and marked dispatched after flush.
-- A dedicated outbox processor service can replay pending/failed records with bounded retries.
+1. Parse DSL (`Parser`).
+2. Validate required keys and deterministic constraints (`Validator`).
+3. Compile transitions index (`Compiler`).
+4. Persist as active definition in storage.
+5. Invalidate old active cache pointer for same scope.
+6. Warm local/distributed cache with new active definition.
 
-### Execution Builder Model
+Validation rules currently enforced include:
 
-- `WorkflowEngine::execution(?string $instanceId = null)` returns an `ExecutionBuilder`.
-- The builder collects listeners and hooks for a single execute call.
-- Builder hooks are orchestration-level concerns:
-	- `before`: runs before transition execution.
-	- `after`: runs after successful transition execution.
-- No global state is mutated when registering inline listeners.
+- Required keys: `dsl_version`, `name`, `version`, `initial_state`, `states`, `transitions`.
+- `initial_state` must exist in `states`.
+- `final_states` must be non-empty and members of `states`.
+- Each transition requires non-empty `from`, `to`, `action`, `transition_id`.
+- Transition `from`/`to` must exist in `states`.
+- `from + action` must be unique.
+- Rule `fn` names must exist in `FunctionRegistry`.
+- Mapping configs are validated by type and required keys.
 
-## Diagnostics Model
+## 5. Execution Flow (`execute`)
 
-- Technical diagnostics are emitted through a dedicated diagnostics emitter abstraction.
-- Transition diagnostics include success and failure signals with structured exception metadata.
-- Outbox diagnostics include per-item dispatched/failed events and per-batch summaries.
-- Diagnostics emission can be toggled through package configuration.
+```mermaid
+sequenceDiagram
+	participant Client
+	participant Engine as WorkflowEngine
+	participant Exec as TransitionExecutor
+	participant Storage
+	participant Events as Dispatcher
 
-## Multi-Tenant Isolation
+	Client->>Engine: execute(instanceId, action, context)
+	Engine->>Storage: getInstance(instanceId)
+	Engine->>Storage: getDefinitionById(definitionId)
+	Engine->>Exec: executeWithListeners(instance, def, action, context)
+	Exec->>Storage: transaction(...)
+	Exec->>Exec: resolve transition + policy check
+	Exec->>Exec: optional mappings (context.data)
+	Exec->>Storage: updateInstanceWithVersionCheck
+	Exec->>Storage: appendHistory
+	Exec->>Events: queue(TransitionExecuted effect events)
+	Storage-->>Exec: commit
+	Exec->>Events: flushAfterCommit()
+	Exec-->>Engine: updated instance
+	Engine-->>Client: updated instance
+```
 
-- Definition activation and lookup are scoped by workflow + tenant.
-- Cache keys include tenant dimension.
-- Active scope uniqueness prevents cross-tenant active definition conflicts.
-- Engine operations are forced into `workflow.default_tenant_id` scope.
+If anything fails inside transition execution:
+
+- Event queue is cleared.
+- A `TransitionFailed` event is queued and flushed.
+- Diagnostics event `transition.failed` is emitted.
+- Original exception is rethrown.
+
+## 6. Consistency and Concurrency
+
+Consistency model implemented today:
+
+- Transition side effects run inside repository transaction.
+- Optimistic locking via `version` in `updateInstanceWithVersionCheck`.
+- Definition version immutability per `(workflow_name, version, tenant_id)`.
+- Active definition uniqueness by scope (`active_scope` unique index).
+- History append happens in same transaction as state mutation.
+
+Why this matters:
+
+- Prevents silent lost updates.
+- Keeps state/history aligned.
+- Avoids two active definitions in same scope.
+
+## 7. Subject Association and Guard
+
+Instances can include:
+
+- `subject_type`
+- `subject_id`
+
+`SubjectNormalizer` ensures canonical values.
+
+Optional safety mode: `enforce_one_active_per_subject`.
+
+- When enabled, `start()` checks there is no active non-final instance for same subject/workflow/tenant.
+- Check and create are wrapped in transaction.
+- Unique-constraint race is translated to domain exception (`ActiveSubjectInstanceExistsException`).
+
+## 8. Rule Evaluation Model
+
+Supported rule operators:
+
+- `role`: checks membership in `context.roles`.
+- `fn`: executes registered function from `FunctionRegistry`.
+- `all`: logical AND.
+- `any`: logical OR.
+- `not`: logical NOT.
+
+Important behavior:
+
+- Missing required context for role checks throws `ContextValidationException`.
+- `can()` catches rule/policy exceptions and returns `false` (safe answer, no mutation).
+
+Functions are resolved from `FunctionRegistry` and must be registered before DSL validation/activation.
+
+## 9. Fields Visibility/Editability
+
+`visibleFields()` returns action-keyed field permissions from current state transitions.
+
+- Uses `FieldEngine`.
+- Supports static lists: `visible`, `editable`.
+- Supports conditional gates: `visible_if`, `editable_if`.
+- Final states return empty result.
+
+## 10. Data Mapping Model
+
+Write path during `execute()`:
+
+- Mapping is applied only if transition has `mappings`.
+- Requires `context.data` as array.
+- `DataMapper::map()` updates instance snapshot and returns mapping summary.
+
+Read path via `resolveMappedData()`:
+
+- Resolves transition first by `current_state + action`.
+- Fallback to latest history item with same `action` and `transition_id`.
+- Final fallback only if action maps to a unique transition in definition.
+- `DataMapper::resolve()` returns expanded data for mapped fields.
+
+Mapping types:
+
+- `attribute`: value stored directly in instance data.
+- `attach`: stores references; can optionally resolve via query handler.
+- `relation`: delegates persistence/query to binding handlers.
+- `custom`: delegates to custom handler class.
+
+## 11. Event and Outbox Delivery
+
+Event dispatcher behavior:
+
+1. `queue(event)` stores event in memory queue.
+2. If outbox enabled, payload is also written to outbox table.
+3. `flushAfterCommit()` dispatches Laravel events and marks outbox record as dispatched.
+
+```mermaid
+flowchart TD
+	A[Transition emits effect] --> B[Dispatcher.queue]
+	B --> C{Outbox enabled?}
+	C -- Yes --> D[Insert workflow_outbox pending]
+	C -- No --> E[Skip outbox write]
+	D --> F[Commit transaction]
+	E --> F
+	F --> G[flushAfterCommit]
+	G --> H[Dispatch Laravel event]
+	G --> I[Mark outbox as dispatched]
+```
+
+Replay path:
+
+- `OutboxProcessor::processPending(limit, maxAttempts)` fetches pending/failed rows.
+- Dispatches each event.
+- Marks row `dispatched` or `failed` with bounded retries.
+
+## 12. Caching Model
+
+Engine uses two cache tiers for definitions:
+
+- In-process arrays (`activeDefinitionCache`, `definitionByIdCache`).
+- Optional Laravel cache store with TTL.
+
+Keys include workflow scope and tenant dimension.
+
+Activation invalidation strategy:
+
+- Remove previous distributed active-pointer target.
+- Drop stale process-local active entries for same scope.
+- Save new pointer and definition payload.
+
+## 13. Multi-Tenant Behavior
+
+Storage supports tenant-scoped definition lookup and activation.
+
+Current engine behavior:
+
+- Runtime tenant is forced by `workflow.default_tenant_id`.
+- `resolveTenantId()` does not read per-request tenant context.
+- Config flag `multi_tenant` exists but is reserved for future rollout.
+
+So today this is effectively single-tenant runtime with tenant-aware storage primitives.
+
+## 14. Observability and Diagnostics
+
+Diagnostics are emitted through `DiagnosticsEmitterInterface`.
+
+When enabled:
+
+- Transition success: `workflow.diagnostic.transition.executed`
+- Transition failure: `workflow.diagnostic.transition.failed`
+- Outbox item/batch events:
+  - `workflow.diagnostic.outbox.item.dispatched`
+  - `workflow.diagnostic.outbox.item.failed`
+  - `workflow.diagnostic.outbox.batch.completed`
+  - `workflow.diagnostic.outbox.batch.skipped`
+
+## 15. Database Model
+
+```mermaid
+erDiagram
+	WORKFLOW_DEFINITIONS ||--o{ WORKFLOW_INSTANCES : has
+	WORKFLOW_INSTANCES ||--o{ WORKFLOW_HISTORIES : has
+
+	WORKFLOW_DEFINITIONS {
+		bigint id PK
+		string workflow_name
+		int version
+		string tenant_id
+		int dsl_version
+		boolean is_active
+		string active_scope
+		longtext definition
+	}
+
+	WORKFLOW_INSTANCES {
+		uuid instance_id PK
+		bigint workflow_definition_id FK
+		string tenant_id
+		string state
+		json data
+		int version
+		string subject_type
+		string subject_id
+	}
+
+	WORKFLOW_HISTORIES {
+		bigint id PK
+		uuid instance_id FK
+		string transition_id
+		string action
+		string from_state
+		string to_state
+		string actor
+		json payload
+	}
+
+	WORKFLOW_OUTBOX {
+		uuid id PK
+		string event_name
+		json payload
+		string status
+		int attempts
+		text last_error
+		timestamp dispatched_at
+	}
+```
+
+## 16. Known Operational Notes
+
+- `can()` is intentionally conservative: evaluation errors return `false`.
+- Listener exceptions (from execution-scoped listeners) can fail execution after commit when `events.fail_silently=false`.
+- `WorkflowInstanceStarted` is emitted immediately after successful start persistence.
+- Mapping handlers are instantiated by class name; invalid/missing handlers fail fast unless mapping fail-silent mode is enabled.
+
+## 17. Contributor Checklist (Architecture-Safe)
+
+When changing the engine:
+
+1. Keep layer boundaries strict.
+2. Do not bypass validator/compiler path for definitions.
+3. Preserve optimistic locking and transaction boundaries.
+4. Preserve post-commit event flush semantics.
+5. Keep exception messages actionable.
+6. Add/update unit + integration tests for happy/error paths.

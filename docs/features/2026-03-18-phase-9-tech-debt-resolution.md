@@ -44,3 +44,15 @@ Implemented updates:
 - Add worker/retry flow for pending outbox events if runtime dispatch fails after commit.
 - Add integration tests with real cache backend for multi-node invalidation behavior.
 - Add explicit JSON/YAML parser error-path tests for malformed payloads.
+
+## Current Status Note (As of 2026-03-20)
+
+- Multi-tenant scope enforcement is active at repository/database level.
+- Runtime tenant selection at `WorkflowEngine` level remains static and tied to configured `workflow.default_tenant_id`.
+- This is an intentional interim state to keep scope determinism while core storage/event debt items are stabilized.
+
+## Planned Tenant Scope Roadmap
+
+- Add dynamic tenant resolution at engine runtime entry points.
+- Provide explicit tenant-context API ergonomics without breaking current public methods.
+- Add engine-level integration tests that assert distinct active definition resolution and instance starts across runtime-provided tenants.

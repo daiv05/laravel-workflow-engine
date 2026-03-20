@@ -25,7 +25,13 @@ Implemented tests:
 - Ensures exception implementation is verifiable and regression-safe.
 - Guarantees diagnostic metadata remains stable for observability and API mapping layers.
 
+## Current Status (2026-03-20)
+
+- Documented factory coverage is in place and aligned with implementation.
+- Added dedicated regression test coverage asserting subclass-specific metadata preservation (`DSLValidationException::nodePath`) when `withContext` is called.
+
 ## Next Steps
 
 - Map domain exception codes to transport/API error envelopes in adapter layers.
 - Add integration tests asserting exception translation behavior in framework boundaries.
+- Completed: Added unit test coverage for `withContext` behavior on subclass exceptions.

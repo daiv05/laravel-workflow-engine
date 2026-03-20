@@ -17,6 +17,8 @@ When enabled, the package emits technical diagnostics for:
 - outbox item dispatch success/failure
 - outbox batch completion and skip conditions
 
+Transition diagnostics are emitted by transition executor, and outbox diagnostics are emitted by outbox processor.
+
 ## Common Diagnostic Event Names
 
 With default prefix (`workflow.diagnostic.`):
@@ -39,7 +41,39 @@ Workflow domain exceptions can be exported as normalized diagnostic payloads:
 
 This shape is used by transition failure diagnostics.
 
+Outbox failure diagnostics also include:
+
+- `outbox_id`
+- `event_name`
+- `attempts_before`
+- `error_message`
+- `exception_class`
+
+Outbox success diagnostics include:
+
+- `outbox_id`
+- `event_name`
+- `attempts_before`
+
+Outbox batch diagnostics include:
+
+- `limit`
+- `max_attempts`
+- `processed`
+- `dispatched`
+- `failed`
+
 ## Outbox Troubleshooting
+
+### Dispatch Flow Clarification
+
+Outbox rows are created when workflow events are queued.
+
+After commit, dispatcher attempts immediate Laravel event dispatch and marks outbox rows as dispatched when successful.
+
+`OutboxProcessor::processPending(limit, maxAttempts)` handles pending/failed rows for retry/recovery flows.
+
+When `limit <= 0` or `maxAttempts <= 0`, processor emits `outbox.batch.skipped` and does not process rows.
 
 ### Symptom: records remain pending
 

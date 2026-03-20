@@ -14,6 +14,8 @@ The package currently supports:
 - workflow_histories
 - workflow_outbox
 
+Note: outbox persistence is active when storage driver is `database` and outbox support is enabled in configuration.
+
 ## workflow_definitions
 
 Main fields:
@@ -95,6 +97,7 @@ Outbox operational fields:
 Worker support:
 
 - Invoke `OutboxProcessor::processPending($limit, $maxAttempts)` from an application scheduler/worker.
+- If `$limit <= 0` or `$maxAttempts <= 0`, batch is skipped.
 
 Dispatch strategy:
 
@@ -102,6 +105,12 @@ Dispatch strategy:
 - Dispatches using Laravel events dispatcher.
 - Marks successful rows as `dispatched`.
 - Marks failures as `failed`, increments `attempts`, and stores `last_error`.
+
+After-commit behavior:
+
+- Transition event queue is flushed only after successful transaction commit.
+- In-process dispatcher path can mark outbox rows as `dispatched` immediately after successful dispatch.
+- Pending/failed rows are intended for retry and operational recovery via outbox processor.
 
 ## Active Definition Resolution
 

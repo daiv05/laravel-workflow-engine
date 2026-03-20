@@ -105,8 +105,6 @@ class Validator
             if (!is_string($rule['fn']) || !$this->functions->has($rule['fn'])) {
                 throw DSLValidationException::withPath('Referenced fn must be registered in FunctionRegistry', $path . '.fn');
             }
-
-            $this->validateSubjectFunctionArgs($rule['fn'], $rule['args'] ?? [], $path);
         }
 
         foreach (['all', 'any'] as $operator) {
@@ -125,34 +123,6 @@ class Validator
 
         if (isset($rule['not'])) {
             $this->validateRuleFunctions($rule['not'], $path . '.not');
-        }
-    }
-
-    /**
-     * @param mixed $args
-     */
-    private function validateSubjectFunctionArgs(string $functionName, mixed $args, string $path): void
-    {
-        if (!is_array($args)) {
-            return;
-        }
-
-        if ($functionName === 'subject_type_matches') {
-            if (!isset($args[0]) || !is_string($args[0]) || trim($args[0]) === '') {
-                throw DSLValidationException::withPath(
-                    'subject_type_matches requires args[0] as non-empty string expected subject type',
-                    $path . '.args.0'
-                );
-            }
-        }
-
-        if ($functionName === 'is_subject_owner' && isset($args[0])) {
-            if (!is_string($args[0]) || trim($args[0]) === '') {
-                throw DSLValidationException::withPath(
-                    'is_subject_owner args[0], when provided, must be a non-empty actor id context key',
-                    $path . '.args.0'
-                );
-            }
         }
     }
 

@@ -2,6 +2,8 @@
 
 ## Laravel Workflow Engine Package
 
+> Update (2026-03-20): This document was reconciled against the current implementation in `src/`, `config/workflow.php`, and package migrations. Notes tagged as **Update** describe implemented behavior, clarifications, and known roadmap gaps.
+
 ## 0. Decision Log (Locked for V2.1)
 
 The following decisions are normative for implementation:
@@ -15,6 +17,14 @@ The following decisions are normative for implementation:
 7. Definition activation rejects duplicate `(workflow_name, version, tenant_id)` to enforce immutable version semantics.
 8. Inspection APIs `availableActions()` and `history()` are part of the supported developer surface.
 9. Operational diagnostics and outbox retry processing are first-class runtime support features.
+
+> Update (2026-03-20): Decisions 1 to 9 are implemented in the package runtime and persistence layer.
+
+### 0.1 Implementation Alignment Snapshot
+
+- **Implemented**: immutable definition versioning, single active definition per `(workflow_name, tenant_id)`, `dsl_version` validation, mandatory `initial_state` and `final_states`, stable `transition_id`, optimistic locking on instance updates, after-commit event dispatch strategy, outbox storage and retry processor, diagnostics emitter, execution-scoped listeners, inspection APIs (`availableActions`, `history`), subject association APIs.
+- **Partially Implemented**: tenant override per call is available for subject query APIs, while core runtime calls (`start`, `execute`, `can`, `visibleFields`) currently use configured default tenant resolution.
+- **Roadmap/Not Exposed Yet**: fluent runtime tenant switch helper (`forTenant`) is documented as target behavior but not exposed in the current public API.
 
 ---
 
@@ -84,11 +94,13 @@ Laravel App
            ├─ Policy Layer
            ├─ Field Engine
            ├─ Event Dispatcher
-       ├─ Execution Builder
-       ├─ Outbox Processor
-       ├─ Diagnostics Emitter
+           ├─ Execution Builder
+           ├─ Outbox Processor
+           ├─ Diagnostics Emitter
            └─ Function Registry
 ```
+
+> Update (2026-03-20): Runtime components above are implemented and wired in `WorkflowServiceProvider`, including `DataMapper` and diagnostics bindings.
 
 ---
 
@@ -132,12 +144,18 @@ src/
  │    ├── OutboxProcessor.php
  │
  ├── Storage/
- │    ├── WorkflowRepository.php
+ │    ├── DatabaseWorkflowRepository.php
+ │    ├── InMemoryWorkflowRepository.php
  │    ├── DatabaseOutboxStore.php
  │    ├── NullOutboxStore.php
  │
  ├── Contracts/
- │    ├── FunctionInterface.php
+ │    ├── WorkflowEngineInterface.php
+ │    ├── StorageRepositoryInterface.php
+ │    ├── RuleEngineInterface.php
+ │    ├── EventDispatcherInterface.php
+ │    ├── FunctionRegistryInterface.php
+ │    ├── OutboxStoreInterface.php
  │
  ├── Facades/
  │    ├── Workflow.php
@@ -145,6 +163,8 @@ src/
  ├── Providers/
  │    ├── WorkflowServiceProvider.php
 ```
+
+> Update (2026-03-20): Storage is currently provided by two repository implementations (`database` and `memory`) selected via `workflow.default_driver`.
 
 ---
 
@@ -157,20 +177,19 @@ src/
 
 return [
 
-    'default_driver' => 'database',
+    'default_driver' => 'memory',
+
+    'default_tenant_id' => 'tenant-default',
 
     'storage' => [
-        'table' => 'workflow_instances',
+        'definitions_table' => 'workflow_definitions',
+        'instances_table' => 'workflow_instances',
+        'histories_table' => 'workflow_histories',
     ],
 
     'cache' => [
         'enabled' => true,
         'ttl' => 300,
-        'shared_enabled' => false,
-    ],
-
-    'functions' => [
-        // global registered functions
     ],
 
     'events' => [
@@ -180,18 +199,32 @@ return [
 
     'outbox' => [
         'enabled' => true,
-        'batch_size' => 100,
+        'table' => 'workflow_outbox',
+        'dispatch_batch' => 50,
         'max_attempts' => 5,
     ],
 
+    'mappings' => [
+        'fail_silently' => false,
+    ],
+
+    'bindings' => [
+        // optional mapping handlers
+    ],
+
     'diagnostics' => [
-        'enabled' => false,
+        'enabled' => true,
         'prefix' => 'workflow.diagnostic.',
     ],
 
+    'enforce_one_active_per_subject' => false,
+
+    // Global toggle reserved for the future multi-tenant feature rollout.
     'multi_tenant' => false,
 ];
 ```
+
+  > Update (2026-03-20): Key names and defaults above were aligned to the current `config/workflow.php` shipped by the package.
 
 ---
 
@@ -241,6 +274,8 @@ transitions:
     effects:
       - event: request_approved
 ```
+
+> Update (2026-03-20): Current validator enforces `name`, `version`, `initial_state`, `states`, `transitions`, non-empty `final_states`, and mandatory `transition_id` for each transition.
 
 ---
 
@@ -293,6 +328,10 @@ Minimum context contract:
 - Nested rules (`all`, `any`, `not`) must be recursively evaluable with provided context.
 - Missing/invalid context shape must raise explicit context validation errors.
 
+> Update (2026-03-20): Runtime context validation is operator-driven:
+> - `roles` is required only when evaluating `role` rules.
+> - `data` is required (and must be array) when transition mappings are executed.
+
 ---
 
 ## 9. Engine API
@@ -301,10 +340,12 @@ Minimum context contract:
 
 ```php
 Workflow::start('termination_request', [
-  'tenant_id' => 'tenant-001',
-  'data' => $data,
+    'data' => $data,
+    'subject' => ['subject_type' => 'request', 'subject_id' => 'REQ-1001'],
 ]);
 ```
+
+> Update (2026-03-20): `start()` currently resolves tenant from configured default tenant. Optional start options implemented today include `data` and optional `subject` (`subject_type`, `subject_id`).
 
 ---
 
@@ -333,6 +374,8 @@ Workflow::can('3c7c6e2b-8fe9-4d31-80d1-4d41b3204c7f', 'approve', [
 It answers whether the action is executable now for that actor in the current instance state.
 For final states, `can()` MUST return `false`.
 
+> Update (2026-03-20): Implemented in `StateMachine::transitionFor()` + `WorkflowEngine::can()`.
+
 ---
 
 ### Get Visible Fields
@@ -345,6 +388,8 @@ Workflow::visibleFields('3c7c6e2b-8fe9-4d31-80d1-4d41b3204c7f', [
 ```
 
 For final states, `visibleFields()` MUST return an empty action map.
+
+> Update (2026-03-20): Implemented in `WorkflowEngine::visibleFields()`.
 
 ---
 
@@ -381,6 +426,8 @@ $history = Workflow::history($instanceId);
 `availableActions()` returns executable actions for current state/context and empty list for final states.
 `history()` returns persisted transition history in chronological order.
 
+> Update (2026-03-20): Both APIs are implemented in `WorkflowEngine` and backed by repository adapters.
+
 ---
 
 ## 10. Function Registry
@@ -392,6 +439,8 @@ Workflow::registerFunction('isHR', function ($context) {
   return in_array('HR', $context['user']->roles);
 });
 ```
+
+> Update (2026-03-20): Rule functions are resolved from `FunctionRegistry`; custom callables can be registered through `registerFunction()`.
 
 ---
 
@@ -471,6 +520,8 @@ fields:
 Uses Laravel native events.
 Events MUST be dispatched **after commit** to prevent side effects when transactions roll back.
 
+> Update (2026-03-20): Transition and start events are queued and flushed after successful transaction completion. On failure, queued events are cleared and a `TransitionFailed` event is queued and flushed.
+
 ---
 
 ### DSL
@@ -500,6 +551,8 @@ Execution-scoped listener order per event:
 
 Inline listener failure behavior is configurable via `events.fail_silently`.
 
+> Update (2026-03-20): Event prefix and listener failure mode are read from `workflow.events` config and wired by `WorkflowServiceProvider`.
+
 ---
 
 ## 14. Storage
@@ -521,6 +574,7 @@ Minimum schema requirements:
 - `workflow_instances.workflow_definition_id` foreign key to `workflow_definitions.id`.
 - `workflow_instances.version` integer for optimistic locking.
 - `workflow_instances.state`, `workflow_instances.data`, timestamps.
+- `workflow_instances.subject_type`, `workflow_instances.subject_id` nullable for subject association.
 - `workflow_definitions.workflow_name`, `workflow_definitions.version`, `workflow_definitions.tenant_id`, `workflow_definitions.is_active`.
 - `workflow_definitions.active_scope` unique constraint to enforce active definition per `(workflow_name, tenant_id)`.
 - Unique immutable definition version per `(workflow_name, version, tenant_id)`.
@@ -532,6 +586,8 @@ Outbox lifecycle states:
 - `pending`
 - `failed`
 - `dispatched`
+
+> Update (2026-03-20): Current migrations and repositories implement all the above, including `active_scope` uniqueness and subject lookup indexes.
 
 ---
 
@@ -551,6 +607,8 @@ Workflow::forTenant($tenantId);
 
 Activation rule: only one active definition per workflow and tenant.
 
+> Update (2026-03-20): Activation scope rule is implemented. `forTenant()` remains a target API and is not currently exposed; runtime tenant resolution uses `workflow.default_tenant_id`.
+
 ---
 
 ## 16. Caching
@@ -564,6 +622,8 @@ Cache:
 Cache keys must include tenant and definition version.
 Cache must be invalidated when a new definition version is activated.
 Optional shared cache integration may be used to improve multi-node behavior.
+
+> Update (2026-03-20): Implemented cache keys include scope/version pointer keys and definition-id keys. Activation invalidates previous active pointer and active definition cache entries for that scope.
 
 ---
 
@@ -604,6 +664,10 @@ php artisan vendor:publish --tag=workflow-config
 * rule evaluation
 * transitions
 * field logic
+* parser/validator DSL constraints
+* optimistic lock behavior in memory repository
+* subject normalization and built-in subject rule functions
+* data mapping behavior
 
 ---
 
@@ -620,6 +684,8 @@ php artisan vendor:publish --tag=workflow-config
 * outbox retry lifecycle (`pending` -> `failed` -> `dispatched`)
 * diagnostics emission on transition and outbox paths
 
+> Update (2026-03-20): Current test suite already covers the categories above through dedicated integration and unit test files.
+
 ---
 
 ## 20. Error Handling
@@ -631,6 +697,7 @@ php artisan vendor:publish --tag=workflow-config
 * duplicate immutable definition version activation
 * optimistic locking mismatches
 * listener execution failures (configurable fail-silent mode)
+* active subject uniqueness collisions when `enforce_one_active_per_subject` is enabled
 
 ---
 
@@ -648,7 +715,7 @@ php artisan vendor:publish --tag=workflow-config
 * avoid repeated parsing
 * cache workflows
 * minimize reflection
-* bound outbox retry batches (`batch_size`, `max_attempts`)
+* bound outbox retry batches (`dispatch_batch`, `max_attempts`)
 
 ---
 
@@ -668,6 +735,8 @@ Versioning policy (V2):
 - Instances are never migrated between definitions.
 - Each instance is permanently bound to its `workflow_definition_id`.
 - New versions apply only to newly started instances.
+
+> Update (2026-03-20): Implemented with immutable `(workflow_name, version, tenant_id)` uniqueness and `workflow_definition_id` binding at instance creation.
 
 ---
 

@@ -16,7 +16,6 @@ use Daiv05\LaravelWorkflowEngine\Exceptions\ActiveSubjectInstanceExistsException
 use Daiv05\LaravelWorkflowEngine\Exceptions\WorkflowException;
 use Daiv05\LaravelWorkflowEngine\Fields\FieldEngine;
 use Daiv05\LaravelWorkflowEngine\Functions\FunctionRegistry;
-use Daiv05\LaravelWorkflowEngine\Functions\SubjectRuleFunctions;
 use Daiv05\LaravelWorkflowEngine\Policies\PolicyEngine;
 use Daiv05\LaravelWorkflowEngine\Rules\RuleEngine;
 use Daiv05\LaravelWorkflowEngine\Storage\DatabaseWorkflowRepository;
@@ -465,11 +464,11 @@ class SubjectAssociationIntegrationTest extends TestCase
                     'allowed_if' => [
                         'all' => [
                             [
-                                'fn' => 'subject_type_matches',
+                                'fn' => 'matches_subject_type',
                                 'args' => ['App\\Models\\Solicitud'],
                             ],
                             [
-                                'fn' => 'is_subject_owner',
+                                'fn' => 'matches_subject_owner',
                                 'args' => ['actor_id'],
                             ],
                         ],
@@ -517,11 +516,11 @@ class SubjectAssociationIntegrationTest extends TestCase
                         'visible' => ['notes'],
                         'editable' => ['notes'],
                         'visible_if' => [
-                            'fn' => 'subject_type_matches',
+                            'fn' => 'matches_subject_type',
                             'args' => ['App\\Models\\Solicitud'],
                         ],
                         'editable_if' => [
-                            'fn' => 'is_subject_owner',
+                            'fn' => 'matches_subject_owner',
                             'args' => ['actor_id'],
                         ],
                     ],
@@ -567,7 +566,7 @@ class SubjectAssociationIntegrationTest extends TestCase
                     'action' => 'approve',
                     'transition_id' => 'tr_approve_subject_optional',
                     'allowed_if' => [
-                        'fn' => 'subject_type_matches',
+                        'fn' => 'matches_subject_type',
                         'args' => ['App\\Models\\Solicitud'],
                     ],
                 ],
@@ -672,8 +671,34 @@ class SubjectAssociationIntegrationTest extends TestCase
         FunctionRegistry $functions,
         bool $enforceOneActivePerSubject = false
     ): WorkflowEngine {
-        $functions->register('subject_type_matches', [SubjectRuleFunctions::class, 'subjectTypeMatches']);
-        $functions->register('is_subject_owner', [SubjectRuleFunctions::class, 'isSubjectOwner']);
+        $functions->register('matches_subject_type', static function (array $context, string $expectedType): bool {
+            $subject = $context['subject'] ?? null;
+
+            if (!is_array($subject)) {
+                return false;
+            }
+
+            $subjectType = $subject['subject_type'] ?? null;
+
+            return is_string($subjectType) && $subjectType === $expectedType;
+        });
+
+        $functions->register('matches_subject_owner', static function (array $context, string $actorIdKey = 'actor_id'): bool {
+            $subject = $context['subject'] ?? null;
+
+            if (!is_array($subject)) {
+                return false;
+            }
+
+            $subjectId = $subject['subject_id'] ?? null;
+            $actorId = $context[$actorIdKey] ?? null;
+
+            if (!is_scalar($subjectId) || !is_scalar($actorId)) {
+                return false;
+            }
+
+            return (string) $subjectId === (string) $actorId;
+        });
 
         $parser = new Parser();
         $validator = new Validator($functions);

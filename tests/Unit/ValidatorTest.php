@@ -8,7 +8,6 @@ use Daiv05\LaravelWorkflowEngine\DSL\Parser;
 use Daiv05\LaravelWorkflowEngine\DSL\Validator;
 use Daiv05\LaravelWorkflowEngine\Exceptions\DSLValidationException;
 use Daiv05\LaravelWorkflowEngine\Functions\FunctionRegistry;
-use Daiv05\LaravelWorkflowEngine\Functions\SubjectRuleFunctions;
 use PHPUnit\Framework\TestCase;
 
 class ValidatorTest extends TestCase
@@ -202,106 +201,4 @@ class ValidatorTest extends TestCase
         ]);
     }
 
-    public function test_it_validates_subject_function_args_when_shape_is_correct(): void
-    {
-        $functions = new FunctionRegistry();
-        $functions->register('subject_type_matches', [SubjectRuleFunctions::class, 'subjectTypeMatches']);
-        $functions->register('is_subject_owner', [SubjectRuleFunctions::class, 'isSubjectOwner']);
-
-        $validator = new Validator($functions);
-        $validator->validate([
-            'dsl_version' => 2,
-            'name' => 'subject_validation_ok',
-            'version' => 1,
-            'initial_state' => 'draft',
-            'final_states' => ['approved'],
-            'states' => ['draft', 'approved'],
-            'transitions' => [
-                [
-                    'from' => 'draft',
-                    'to' => 'approved',
-                    'action' => 'approve',
-                    'transition_id' => 'tr_approve_subject_validation_ok',
-                    'allowed_if' => [
-                        'all' => [
-                            [
-                                'fn' => 'subject_type_matches',
-                                'args' => ['App\\Models\\Solicitud'],
-                            ],
-                            [
-                                'fn' => 'is_subject_owner',
-                                'args' => ['actor_id'],
-                            ],
-                        ],
-                    ],
-                ],
-            ],
-        ]);
-
-        $this->assertTrue(true);
-    }
-
-    public function test_it_fails_when_subject_type_matches_has_missing_or_invalid_args(): void
-    {
-        $functions = new FunctionRegistry();
-        $functions->register('subject_type_matches', [SubjectRuleFunctions::class, 'subjectTypeMatches']);
-
-        $validator = new Validator($functions);
-
-        $this->expectException(DSLValidationException::class);
-        $this->expectExceptionMessage('subject_type_matches requires args[0] as non-empty string expected subject type');
-
-        $validator->validate([
-            'dsl_version' => 2,
-            'name' => 'subject_validation_error',
-            'version' => 1,
-            'initial_state' => 'draft',
-            'final_states' => ['approved'],
-            'states' => ['draft', 'approved'],
-            'transitions' => [
-                [
-                    'from' => 'draft',
-                    'to' => 'approved',
-                    'action' => 'approve',
-                    'transition_id' => 'tr_approve_subject_validation_error',
-                    'allowed_if' => [
-                        'fn' => 'subject_type_matches',
-                        'args' => [''],
-                    ],
-                ],
-            ],
-        ]);
-    }
-
-    public function test_it_fails_when_is_subject_owner_arg_key_is_invalid(): void
-    {
-        $functions = new FunctionRegistry();
-        $functions->register('is_subject_owner', [SubjectRuleFunctions::class, 'isSubjectOwner']);
-
-        $validator = new Validator($functions);
-
-        $this->expectException(DSLValidationException::class);
-        $this->expectExceptionMessage('is_subject_owner args[0], when provided, must be a non-empty actor id context key');
-
-        $validator->validate([
-            'dsl_version' => 2,
-            'name' => 'subject_owner_validation_error',
-            'version' => 1,
-            'initial_state' => 'draft',
-            'final_states' => ['approved'],
-            'states' => ['draft', 'approved'],
-            'transitions' => [
-                [
-                    'from' => 'draft',
-                    'to' => 'approved',
-                    'action' => 'approve',
-                    'transition_id' => 'tr_approve_subject_owner_validation_error',
-                    'allowed_if' => [
-                        'fn' => 'is_subject_owner',
-                        'args' => [123],
-                    ],
-                ],
-            ],
-        ]);
-    }
 }

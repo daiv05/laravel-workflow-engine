@@ -2,17 +2,34 @@
 
 ## Overview
 
-The package exposes a workflow engine centered on four core operations:
+The package exposes a workflow engine with these public operations.
+
+Core runtime operations:
 
 - start
 - can
 - execute
 - visibleFields
 
-It also exposes inspection operations for runtime observability:
+Runtime inspection operations:
 
 - availableActions
 - history
+
+Subject-scoped query operations:
+
+- getLatestInstanceForSubject
+- getInstancesForSubject
+
+Definition and extensibility operations:
+
+- activateDefinition
+- registerFunction
+
+Execution-scoped composition operations:
+
+- execution
+- resolveMappedData
 
 These operations are designed to support immutable definition versioning, UUID instance identity, and after-commit event semantics.
 
@@ -34,6 +51,7 @@ start(string $workflowName, array $options = []): array
 
 - tenant_id: tenant scope for active definition lookup.
 - data: arbitrary payload to initialize instance data.
+- subject: optional subject reference with `subject_type` and `subject_id`.
 
 Runtime tenant scope is forced by `workflow.default_tenant_id`.
 Incoming `tenant_id` values are ignored.
@@ -46,14 +64,17 @@ Incoming `tenant_id` values are ignored.
 - Creates instance with UUID instance_id.
 - Stores immutable workflow_definition_id on the instance.
 - Initializes state with definition initial_state.
+- Normalizes and validates `options.subject` when provided.
 - When `workflow.enforce_one_active_per_subject` is enabled and `options.subject` is provided, rejects creating a second active instance for the same workflow + tenant + subject scope.
 - Active status for this guard is evaluated as `state NOT IN definition.final_states`.
+- Emits `workflow.event.instance_started` after persistence succeeds.
 
 ### start Exceptions
 
 - `ActiveSubjectInstanceExistsException`: thrown when `workflow.enforce_one_active_per_subject` is enabled and an active instance already exists for the same scope.
 - Exception message: `An active instance of {workflow} already exists for this subject`.
 - Exception context includes `workflow_name`, `subject_type`, `subject_id`, `existing_instance_id`, and `tenant_id`.
+- `WorkflowException`: thrown when `options.subject` is malformed.
 
 ## can
 
@@ -72,7 +93,7 @@ can(string $instanceId, string $action, array $context = []): bool
 - Evaluates policy/rule authorization.
 - Automatically injects persisted instance subject into rule context as `subject.subject_type` and `subject.subject_id` when available.
 - Returns false when the current state is in `final_states`, even if DSL defines outgoing transitions.
-- Returns false on invalid transition or non-evaluable context.
+- Returns false on invalid transition, unauthorized transition, or non-evaluable context.
 
 ## execute
 
@@ -92,9 +113,20 @@ execute(string $instanceId, string $action, array $context = []): array
 - Updates state and optimistic-lock version.
 - Appends history entry.
 - Queues events inside transaction.
-- Flushes event dispatch after successful commit.
-- Clears queued events on failure.
+- Runs execution-scoped inline listeners before global Laravel listeners.
+- Flushes queued event dispatch after successful commit.
+- Clears queued success events on failure.
+- Emits `workflow.event.transition_failed` when execution fails.
 - Rejects transitions from final states with `InvalidTransitionException`.
+
+### execute Exceptions
+
+- `InvalidTransitionException`: no valid transition for current state/action.
+- `UnauthorizedTransitionException`: `allowed_if` rule denied execution.
+- `ContextValidationException`: missing/invalid context keys (for example `roles` or `data`).
+- `OptimisticLockException`: concurrent write conflict on instance update.
+- `MappingException`: mapping infrastructure/configuration error.
+- `WorkflowException`: general domain failure (including mapping handler errors).
 
 ## resolveMappedData
 
@@ -109,10 +141,18 @@ resolveMappedData(string $instanceId, string $action, array $context = [], array
 ### Behavior
 
 - Reads instance snapshot from storage.
-- Resolves transition mappings by `(current_state, action)`.
+- Resolves transition for read using this priority:
+	- direct match by `(current_state, action)`
+	- latest history entry for `action` with matching `transition_id`
+	- unique transition by `action` across definition
 - Returns `attribute` fields from instance data.
 - Resolves `attach` and `relation` through configured binding `query_handler` when available.
 - Resolves `custom` via mapping handler/query handler when it implements read contract.
+- Returns an empty array when no resolvable mapped transition exists.
+
+### resolveMappedData Exceptions
+
+- `MappingException`: thrown when `DataMapper` is not configured.
 
 ## execution
 
@@ -158,6 +198,10 @@ execution(?string $instanceId = null): ExecutionBuilder
 	- `subject` (optional)
 	- `tenant_id` (optional)
 
+### execution Exceptions
+
+- `WorkflowException` code `7002` when no instance ID was provided (`execution()` without `forInstance()` and without constructor instance).
+
 ### Example
 
 ```php
@@ -191,7 +235,8 @@ visibleFields(string $instanceId, array $context = []): array
 
 - Evaluates field conditions through rule engine.
 - Automatically injects persisted instance subject into rule context as `subject.subject_type` and `subject.subject_id` when available.
-- Returns per-action visibility/editability projection.
+- Returns per-action visibility/editability projection for transitions originating at current state.
+- Does not enforce transition authorization (`allowed_if`) filtering.
 - Returns an empty map when the instance is in a final state.
 
 ## availableActions
@@ -211,6 +256,7 @@ availableActions(string $instanceId, array $context = []): array
 - Automatically injects persisted instance subject into rule context as `subject.subject_type` and `subject.subject_id` when available.
 - Returns only actions executable now for the provided context.
 - Returns empty when instance is in a final state.
+- De-duplicates action names before returning.
 
 ## history
 
@@ -226,6 +272,44 @@ history(string $instanceId): array
 
 - Returns records ordered by creation sequence.
 - Includes action, transition id, from/to states, actor, and payload snapshot.
+- Payload context stores a safe summary (`has_data`, `data_keys`, optional `roles`, optional `actor`, optional `meta_keys`) instead of full arbitrary context.
+
+## activateDefinition
+
+Compiles and activates a workflow definition version.
+
+### Signature
+
+```php
+activateDefinition(string $workflowName, array|string $definition, ?string $tenantId = null): int
+```
+
+### Behavior
+
+- Parses, validates, and compiles DSL before persistence.
+- Persists a new active definition version and returns definition ID.
+- Invalidates in-memory/distributed cache pointer for previous active version.
+- Updates active definition cache and definition-by-id cache.
+- Runtime tenant scope is currently forced by `workflow.default_tenant_id`; incoming `tenantId` is ignored.
+
+### activateDefinition Exceptions
+
+- `DSLValidationException` for malformed/invalid DSL.
+
+## registerFunction
+
+Registers a custom function in the function registry for use in DSL rules (`fn`).
+
+### Signature
+
+```php
+registerFunction(string $name, callable $function): void
+```
+
+### Behavior
+
+- Makes the function available to rule evaluation and DSL validation paths.
+- Allows extending `allowed_if`, field predicates, and other rule-based expressions.
 
 ## getLatestInstanceForSubject
 
@@ -248,6 +332,10 @@ getLatestInstanceForSubject(string $workflowName, array $subjectRef, ?string $te
 - Normalizes and validates `subjectRef` through `SubjectNormalizer`.
 - Delegates query execution to storage repository implementation.
 - Returns `null` when no matching instance exists.
+
+### getLatestInstanceForSubject Exceptions
+
+- `WorkflowException` when `subjectRef` is malformed.
 
 ### Example
 
@@ -280,6 +368,10 @@ getInstancesForSubject(array $subjectRef, ?string $tenantId = null, ?string $wor
 - Delegates query execution to storage repository implementation.
 - Returns instances ordered by creation sequence.
 
+### getInstancesForSubject Exceptions
+
+- `WorkflowException` when `subjectRef` is malformed.
+
 ### Example
 
 ```php
@@ -301,6 +393,11 @@ For transitions with mappings, context must include:
 
 If missing or invalid, evaluation throws context validation errors in strict evaluation paths.
 
+In non-strict query paths:
+
+- `can()` returns `false` on context evaluation errors.
+- `availableActions()` skips transitions that fail context evaluation.
+
 ## Exceptions
 
 Common domain exceptions:
@@ -310,6 +407,8 @@ Common domain exceptions:
 - UnauthorizedTransitionException
 - OptimisticLockException
 - ContextValidationException
+- MappingException
+- ActiveSubjectInstanceExistsException
 - WorkflowException
 
 ### Diagnostic Context
@@ -327,3 +426,11 @@ Inline listener failure behavior is controlled by configuration:
 
 - `workflow.events.fail_silently = false` (default): the first listener exception is rethrown after global event flush.
 - `workflow.events.fail_silently = true`: listener exceptions are ignored and execution continues.
+
+## Event Names
+
+With default prefix `workflow.event.`:
+
+- `workflow.event.instance_started`
+- `workflow.event.{effect_event_name}` (for each transition effect)
+- `workflow.event.transition_failed`

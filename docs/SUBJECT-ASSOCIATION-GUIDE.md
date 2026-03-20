@@ -85,6 +85,7 @@ class WorkflowInstanceRecord extends Model
     protected $table = 'workflow_instances';
     protected $primaryKey = 'instance_id';
     protected $keyType = 'string';
+    public $incrementing = false;
 
     public function subject()
     {
@@ -138,7 +139,7 @@ class WorkflowInstanceQueryService
         Solicitud $solicitud,
         string $workflowName
     ): ?array {
-        return DB::table('workflow_instances')
+        $row = DB::table('workflow_instances')
             ->join(
                 'workflow_definitions',
                 'workflow_instances.workflow_definition_id',
@@ -150,8 +151,9 @@ class WorkflowInstanceQueryService
             ->where('workflow_instances.subject_id', (string) $solicitud->id)
             ->whereNull('workflow_instances.tenant_id')
             ->orderByDesc('workflow_instances.created_at')
-            ->first()
-            ->toArray();
+            ->first();
+
+        return $row === null ? null : (array) $row;
     }
 
     /**
@@ -200,6 +202,7 @@ Maintain a denormalized projection for UI dashboards:
 
 namespace Database\Migrations;
 
+use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
@@ -238,12 +241,14 @@ class CreateSubjectWorkflowProjection extends Migration
 
 namespace App\Listeners\Workflow;
 
+use Illuminate\Support\Facades\DB;
+
 class UpdateSubjectProjectionListener
 {
-    public function handle(object $event): void
+    public function handle(string $eventName, array $payload): void
     {
-        $subject = is_array($event->payload['subject'] ?? null)
-            ? $event->payload['subject']
+        $subject = is_array($payload['subject'] ?? null)
+            ? $payload['subject']
             : null;
 
         if ($subject === null) {
@@ -251,26 +256,28 @@ class UpdateSubjectProjectionListener
         }
 
         DB::table('subject_workflow_projection')
-            ->updateOrCreate(
+            ->updateOrInsert(
                 [
-                    'tenant_id' => $event->payload['tenant_id'] ?? null,
+                    'tenant_id' => $payload['tenant_id'] ?? null,
                     'subject_type' => $subject['subject_type'],
                     'subject_id' => $subject['subject_id'],
-                    'workflow_name' => $this->resolveWorkflowNameFromEvent($event),
+                    'workflow_name' => $this->resolveWorkflowNameFromPayload($eventName, $payload),
                 ],
                 [
-                    'latest_instance_id' => $event->payload['instance_id'] ?? null,
-                    'latest_state' => $event->payload['to_state'] ?? ($event->payload['state'] ?? null),
-                    'latest_action' => $event->payload['action'] ?? null,
+                    'latest_instance_id' => $payload['instance_id'] ?? null,
+                    'latest_state' => $payload['to_state'] ?? ($payload['state'] ?? null),
+                    'latest_action' => $payload['action'] ?? null,
                     'latest_transition_at' => now(),
-                    'latest_context' => json_encode($event->payload['context'] ?? []),
+                    'latest_context' => json_encode($payload['context'] ?? []),
+                    'updated_at' => now(),
+                    'created_at' => now(),
                 ]
             );
     }
 
-    private function resolveWorkflowNameFromEvent(object $event): string
+    private function resolveWorkflowNameFromPayload(string $eventName, array $payload): string
     {
-        return (string) ($event->payload['workflow_name'] ?? 'unknown_workflow');
+        return (string) ($payload['workflow_name'] ?? 'unknown_workflow');
     }
 }
 ```
@@ -412,9 +419,9 @@ This is available on:
 Example listener:
 
 ```php
-public function handle(object $event): void
+public function handle(string $eventName, array $payload): void
 {
-    $subject = $event->payload['subject'] ?? null;
+    $subject = $payload['subject'] ?? null;
 
     if (!is_array($subject)) {
         return;
@@ -493,7 +500,7 @@ A: Yes. Each workflow + subject combination is independent. Query by workflow_na
 
 **Q: What if my subject has a non-scalar ID (e.g., composite key)?**
 
-A: Normalize it to a string in your application boundary before calling start. The engine accepts any scalar that can convert to string.
+A: Normalize it to a string in your application boundary before calling start. The engine currently normalizes `string`, `int`, `float`, and stringable object IDs.
 
 **Q: Should I denormalize state onto the subject model?**
 
