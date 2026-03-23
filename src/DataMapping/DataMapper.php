@@ -275,10 +275,10 @@ class DataMapper implements DataMapperInterface
     private function relationMode(array $config, string $field): string
     {
         if (!isset($config['mode']) || !is_string($config['mode']) || $config['mode'] === '') {
-            return 'create_many';
+            return 'persist';
         }
 
-        if (!in_array($config['mode'], ['create_many', 'reference_only'], true)) {
+        if (!in_array($config['mode'], ['persist', 'reference_only'], true)) {
             throw MappingException::invalidRelationMode($config['mode'], $field);
         }
 

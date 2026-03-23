@@ -301,7 +301,7 @@ class ValidatorTest extends TestCase
                     'transition_id' => 'tr_approve',
                     'allowed_if' => [],
                     'mappings' => [
-                        'documents' => ['type' => 'relation', 'target' => 'documents', 'mode' => 'reference_only'],
+                        'documents' => ['type' => 'relation', 'target' => 'documents', 'mode' => 'persist'],
                     ],
                 ],
             ],

@@ -23,7 +23,7 @@ class DataMapperTest extends TestCase
 
         $mappings = [
             'comment' => ['type' => 'attribute'],
-            'documents' => ['type' => 'relation', 'target' => 'documents', 'mode' => 'create_many'],
+            'documents' => ['type' => 'relation', 'target' => 'documents', 'mode' => 'persist'],
             'document_refs' => ['type' => 'relation', 'target' => 'documents', 'mode' => 'reference_only'],
             'document_ids' => ['type' => 'attach', 'target' => 'documents'],
             'code' => ['type' => 'custom', 'handler' => TestUppercaseMapper::class, 'query_handler' => TestUppercaseMapper::class],
@@ -45,7 +45,7 @@ class DataMapperTest extends TestCase
         $this->assertSame([10, 11], $result['instance_data']['document_refs']);
         $this->assertSame([1, 2], $result['instance_data']['document_ids']);
         $this->assertSame('AB-123', $result['instance_data']['code']);
-        $this->assertSame('create_many', $result['summary']['documents']['mode']);
+        $this->assertSame('persist', $result['summary']['documents']['mode']);
         $this->assertSame('reference_only', $result['summary']['document_refs']['mode']);
         $this->assertSame('attached', $result['summary']['document_refs']['status']);
 

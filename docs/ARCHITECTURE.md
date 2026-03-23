@@ -189,7 +189,7 @@ Mapping types:
 
 - `attribute`: value stored directly in instance data.
 - `attach`: stores references; can optionally resolve via query handler.
-- `relation`: delegates persistence/query to binding handlers and supports `mode` with minimal semantics (`create_many`, `reference_only`).
+- `relation`: delegates persistence/query to binding handlers and supports `mode` with minimal semantics (`persist`, `reference_only`).
 - `custom`: delegates to custom handler class (valid class name required by DSL validation).
 
 V2 mapping constraints:

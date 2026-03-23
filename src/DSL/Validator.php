@@ -160,7 +160,7 @@ class Validator
         }
 
         $allowedTypes = ['attribute', 'attach', 'relation', 'custom'];
-        $allowedRelationModes = ['create_many', 'reference_only'];
+        $allowedRelationModes = ['persist', 'reference_only'];
 
         foreach ($transition['mappings'] as $field => $mapping) {
             $fieldPath = $path . '.mappings.' . (string) $field;
@@ -200,7 +200,7 @@ class Validator
 
             if ($type === 'relation' && array_key_exists('mode', $mapping)) {
                 if (!is_string($mapping['mode']) || !in_array($mapping['mode'], $allowedRelationModes, true)) {
-                    throw DSLValidationException::withPath('relation mode must be one of: create_many, reference_only', $fieldPath . '.mode');
+                    throw DSLValidationException::withPath('relation mode must be one of: persist, reference_only', $fieldPath . '.mode');
                 }
             }
         }

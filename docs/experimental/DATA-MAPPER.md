@@ -30,7 +30,7 @@ Data Mapper V2 defines a deterministic mapping contract between workflow transit
 - Delegates write/read to binding handlers.
 - Requires `target`.
 - Supports `mode`:
-  - `create_many` (default)
+    - `persist` (default)
   - `reference_only`
 
 `mode` is a validated runtime hint. The engine does not run ORM logic itself.
@@ -48,7 +48,7 @@ For each mapping field:
 
 - `type` must be one of: `attribute`, `attach`, `relation`, `custom`.
 - `attach` and `relation` require `target` (non-empty string).
-- `relation.mode` if present must be `create_many` or `reference_only`.
+- `relation.mode` if present must be `persist` or `reference_only`.
 - `mode` is allowed only for `relation`.
 - `custom.handler` must be a valid class name.
 - Unsupported keys for a mapping type fail validation.
@@ -147,6 +147,7 @@ When `workflow.mappings.fail_silently = true`:
 ## 11. Migration Notes (Breaking)
 
 - `relation.mode` is validated.
+- `relation.mode` values are `persist|reference_only`.
 - `custom.handler` must be a real class name.
 - `mode` on non-`relation` mappings is rejected.
 - `target` on `attribute` and `custom` mappings is rejected.
@@ -157,6 +158,10 @@ Minimum coverage for V2:
 
 - Unit: validator errors and accepted V2 mappings.
 - Unit: mapper write/read for all mapping types.
-- Unit: relation mode behavior (`create_many`, `reference_only`).
+- Unit: relation mode behavior (`persist`, `reference_only`).
 - Integration: `start -> can -> execute -> events -> persistence` with mappings.
 - Integration: rollback without partial side effects when handler fails.
+
+## 13. Recipes
+
+Practical copy-ready templates are available in `docs/experimental/DATA-MAPPER-RECIPES.md`.

@@ -54,7 +54,7 @@ class MappingException extends WorkflowException
     public static function invalidRelationMode(string $mode, string $field): self
     {
         return new self(
-            'Invalid relation mode "' . $mode . '" for field "' . $field . '". Allowed: create_many, reference_only',
+            'Invalid relation mode "' . $mode . '" for field "' . $field . '". Allowed: persist, reference_only',
             6106,
             null,
             ['mode' => $mode, 'field' => $field]

@@ -12,14 +12,14 @@ Delivered a breaking-change hardening pass for Data Mapper to align DSL, runtime
 
 - Added `resolveMappedData()` to `WorkflowEngineInterface`.
 - Implemented Data Mapper V2 runtime behavior:
-  - relation `mode` support: `create_many` and `reference_only`
+  - relation `mode` support: `persist` and `reference_only`
   - runtime defensive validation for invalid relation mode
   - fail-silent behavior for both `map()` and `resolve()`
   - handler resolution through injected resolver (container-friendly) with fallback
 - Updated service provider wiring to resolve mapping handlers via Laravel container.
 - Tightened DSL mapping validation:
   - `mode` allowed only for `relation`
-  - allowed relation modes: `create_many`, `reference_only`
+  - allowed relation modes: `persist`, `reference_only`
   - `attach`/`relation` require `target`
   - `attribute`/`custom` reject `target`
   - `custom.handler` must be a valid class name
@@ -29,7 +29,7 @@ Delivered a breaking-change hardening pass for Data Mapper to align DSL, runtime
 ### Unit
 
 - `tests/Unit/DataMapperTest.php`
-  - relation `create_many` and `reference_only`
+  - relation `persist` and `reference_only`
   - fail-silent behavior in resolve path
   - handler resolution through injected resolver
 - `tests/Unit/ValidatorTest.php`
@@ -54,7 +54,7 @@ Delivered a breaking-change hardening pass for Data Mapper to align DSL, runtime
 
 - `custom.handler` must be a valid class name.
 - `mode` is rejected outside `relation` mappings.
-- `relation.mode` values are restricted to `create_many|reference_only`.
+- `relation.mode` values are restricted to `persist|reference_only`.
 - `target` is rejected for `attribute` and `custom` mappings.
 - Public engine contract now includes `resolveMappedData()`.
 

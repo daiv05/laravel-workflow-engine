@@ -79,7 +79,7 @@ class WorkflowEngineDataMappingTest extends TestCase
                     'allowed_if' => [],
                     'mappings' => [
                         'comment' => ['type' => 'attribute'],
-                        'documents' => ['type' => 'relation', 'target' => 'documents', 'mode' => 'create_many'],
+                        'documents' => ['type' => 'relation', 'target' => 'documents', 'mode' => 'persist'],
                         'document_refs' => ['type' => 'relation', 'target' => 'documents', 'mode' => 'reference_only'],
                         'document_ids' => ['type' => 'attach', 'target' => 'documents'],
                     ],
@@ -119,7 +119,7 @@ class WorkflowEngineDataMappingTest extends TestCase
         $this->assertSame(['comment', 'documents', 'document_refs', 'document_ids'], $payload['context']['data_keys']);
         $this->assertArrayHasKey('mapping_summary', $payload);
         $this->assertArrayNotHasKey('user', $payload['context']);
-        $this->assertSame('create_many', $payload['mapping_summary']['documents']['mode']);
+        $this->assertSame('persist', $payload['mapping_summary']['documents']['mode']);
         $this->assertSame('reference_only', $payload['mapping_summary']['document_refs']['mode']);
         $this->assertSame('attached', $payload['mapping_summary']['document_refs']['status']);
 

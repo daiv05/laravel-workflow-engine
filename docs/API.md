@@ -110,7 +110,7 @@ execute(string $instanceId, string $action, array $context = []): array
 - Runs in storage transaction.
 - Applies transition `mappings` when configured.
 - Requires `context.data` as array when mappings exist.
-- Validates mapping runtime modes for `relation` (`create_many`, `reference_only`).
+- Validates mapping runtime modes for `relation` (`persist`, `reference_only`).
 - Updates state and optimistic-lock version.
 - Appends history entry.
 - Queues events inside transaction.
@@ -155,7 +155,7 @@ Mapping semantics:
 
 - `attribute`: stores/retrieves raw value from instance snapshot.
 - `attach`: stores references only and resolves via binding query handler when available.
-- `relation`: supports `mode=create_many|reference_only`; `mode` is validated by DSL/runtime and passed to handlers as deterministic context.
+- `relation`: supports `mode=persist|reference_only`; `mode` is validated by DSL/runtime and passed to handlers as deterministic context.
 - `custom`: requires a valid handler class name and delegates write/read behavior to that class.
 
 ### resolveMappedData Exceptions
