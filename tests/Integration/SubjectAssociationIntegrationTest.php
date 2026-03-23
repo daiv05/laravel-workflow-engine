@@ -10,6 +10,7 @@ use Daiv05\LaravelWorkflowEngine\DSL\Parser;
 use Daiv05\LaravelWorkflowEngine\DSL\Validator;
 use Daiv05\LaravelWorkflowEngine\Engine\StateMachine;
 use Daiv05\LaravelWorkflowEngine\Engine\TransitionExecutor;
+use Daiv05\LaravelWorkflowEngine\Engine\UpdateExecutor;
 use Daiv05\LaravelWorkflowEngine\Engine\WorkflowEngine;
 use Daiv05\LaravelWorkflowEngine\Events\Dispatcher;
 use Daiv05\LaravelWorkflowEngine\Exceptions\ActiveSubjectInstanceExistsException;
@@ -708,6 +709,7 @@ class SubjectAssociationIntegrationTest extends TestCase
         $policy = new PolicyEngine($rules);
         $fields = new FieldEngine($rules);
         $executor = new TransitionExecutor($stateMachine, $policy, $storage, $dispatcher);
+        $updateExecutor = new UpdateExecutor($stateMachine, $policy, $fields, $storage, $dispatcher);
 
         return new WorkflowEngine(
             $storage,
@@ -725,7 +727,8 @@ class SubjectAssociationIntegrationTest extends TestCase
             300,
             null,
             'tenant-default',
-            $enforceOneActivePerSubject
+            $enforceOneActivePerSubject,
+            $updateExecutor
         );
     }
 }

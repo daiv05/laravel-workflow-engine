@@ -12,6 +12,7 @@ use Daiv05\LaravelWorkflowEngine\DSL\Parser;
 use Daiv05\LaravelWorkflowEngine\DSL\Validator;
 use Daiv05\LaravelWorkflowEngine\Engine\StateMachine;
 use Daiv05\LaravelWorkflowEngine\Engine\TransitionExecutor;
+use Daiv05\LaravelWorkflowEngine\Engine\UpdateExecutor;
 use Daiv05\LaravelWorkflowEngine\Engine\WorkflowEngine;
 use Daiv05\LaravelWorkflowEngine\Events\Dispatcher;
 use Daiv05\LaravelWorkflowEngine\Exceptions\ContextValidationException;
@@ -45,6 +46,7 @@ class WorkflowEngineDataMappingTest extends TestCase
         ]);
 
         $executor = new TransitionExecutor($stateMachine, $policy, $storage, $events, null, false, $mapper);
+        $updateExecutor = new UpdateExecutor($stateMachine, $policy, $fields, $storage, $events, $mapper);
 
         $engine = new WorkflowEngine(
             $storage,
@@ -60,7 +62,10 @@ class WorkflowEngineDataMappingTest extends TestCase
             null,
             true,
             300,
-            $mapper
+            $mapper,
+            'tenant-default',
+            false,
+            $updateExecutor
         );
 
         $engine->activateDefinition('mapping_flow', [
@@ -149,6 +154,7 @@ class WorkflowEngineDataMappingTest extends TestCase
         $mapper = new DataMapper();
 
         $executor = new TransitionExecutor($stateMachine, $policy, $storage, $events, null, false, $mapper);
+        $updateExecutor = new UpdateExecutor($stateMachine, $policy, $fields, $storage, $events, $mapper);
 
         $engine = new WorkflowEngine(
             $storage,
@@ -164,7 +170,10 @@ class WorkflowEngineDataMappingTest extends TestCase
             null,
             true,
             300,
-            $mapper
+            $mapper,
+            'tenant-default',
+            false,
+            $updateExecutor
         );
 
         $engine->activateDefinition('mapping_flow', [
@@ -213,6 +222,7 @@ class WorkflowEngineDataMappingTest extends TestCase
         ]);
 
         $executor = new TransitionExecutor($stateMachine, $policy, $storage, $events, null, false, $mapper);
+        $updateExecutor = new UpdateExecutor($stateMachine, $policy, $fields, $storage, $events, $mapper);
 
         $engine = new WorkflowEngine(
             $storage,
@@ -228,7 +238,10 @@ class WorkflowEngineDataMappingTest extends TestCase
             null,
             true,
             300,
-            $mapper
+            $mapper,
+            'tenant-default',
+            false,
+            $updateExecutor
         );
 
         $engine->activateDefinition('mapping_flow', [

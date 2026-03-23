@@ -9,6 +9,7 @@ use Daiv05\LaravelWorkflowEngine\Exceptions\ContextValidationException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\DSLValidationException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\FunctionNotFoundException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\InvalidTransitionException;
+use Daiv05\LaravelWorkflowEngine\Exceptions\InvalidTransitionValidationException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\OptimisticLockException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\UnauthorizedTransitionException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\WorkflowException;
@@ -74,6 +75,18 @@ class DomainExceptionsTest extends TestCase
         $this->assertSame('Invalid transition for current state and action', $exception->getMessage());
         $this->assertSame(
             ['state' => 'draft', 'action' => 'approve'],
+            $exception->context()
+        );
+    }
+
+    public function test_invalid_transition_validation_factory_sets_context_and_code(): void
+    {
+        $exception = InvalidTransitionValidationException::forMissingRequiredFields('draft', 'submit', ['reason']);
+
+        $this->assertSame(3003, $exception->getCode());
+        $this->assertSame('Transition validation failed: missing required fields', $exception->getMessage());
+        $this->assertSame(
+            ['state' => 'draft', 'action' => 'submit', 'fields' => ['reason']],
             $exception->context()
         );
     }

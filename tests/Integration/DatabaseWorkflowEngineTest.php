@@ -10,10 +10,12 @@ use Daiv05\LaravelWorkflowEngine\DSL\Parser;
 use Daiv05\LaravelWorkflowEngine\DSL\Validator;
 use Daiv05\LaravelWorkflowEngine\Engine\StateMachine;
 use Daiv05\LaravelWorkflowEngine\Engine\TransitionExecutor;
+use Daiv05\LaravelWorkflowEngine\Engine\UpdateExecutor;
 use Daiv05\LaravelWorkflowEngine\Engine\WorkflowEngine;
 use Daiv05\LaravelWorkflowEngine\Events\Dispatcher;
 use Daiv05\LaravelWorkflowEngine\Events\WorkflowEvent;
 use Daiv05\LaravelWorkflowEngine\Exceptions\InvalidTransitionException;
+use Daiv05\LaravelWorkflowEngine\Exceptions\InvalidTransitionValidationException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\WorkflowException;
 use Daiv05\LaravelWorkflowEngine\Fields\FieldEngine;
 use Daiv05\LaravelWorkflowEngine\Functions\FunctionRegistry;
@@ -525,6 +527,161 @@ class DatabaseWorkflowEngineTest extends TestCase
         $this->assertArrayHasKey('payload', $history[0]);
     }
 
+    public function test_database_engine_updates_data_in_place_and_records_update_history(): void
+    {
+        $functions = new FunctionRegistry();
+        $functions->register('isOwner', static fn (array $context): bool => (($context['actor'] ?? null) === (($context['subject']['subject_id'] ?? null))));
+
+        $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
+        $dispatcher = new Dispatcher('workflow.event.');
+        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+
+        $engine->activateDefinition('draft_updates', [
+            'dsl_version' => 2,
+            'name' => 'draft_updates',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved'],
+            'states' => [
+                [
+                    'name' => 'draft',
+                    'permissions' => [
+                        'update' => [
+                            'allowed_if' => ['fn' => 'isOwner'],
+                        ],
+                    ],
+                    'fields' => [
+                        'comment' => ['editable' => true],
+                    ],
+                ],
+                'approved',
+            ],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'approved',
+                    'action' => 'submit',
+                    'transition_id' => 'tr_submit',
+                    'allowed_if' => [],
+                ],
+            ],
+        ]);
+
+        $instance = $engine->start('draft_updates', [
+            'subject' => ['subject_type' => 'user', 'subject_id' => 'owner-1'],
+            'data' => ['comment' => 'initial'],
+        ]);
+
+        $updated = $engine->update($instance['instance_id'], [
+            'actor' => 'owner-1',
+            'data' => ['comment' => 'updated'],
+        ]);
+
+        $this->assertSame('draft', $updated['state']);
+        $this->assertSame('updated', $updated['data']['comment']);
+        $this->assertSame(1, $updated['version']);
+
+        $history = $engine->history($instance['instance_id']);
+        $this->assertCount(1, $history);
+        $this->assertSame('update', $history[0]['action']);
+        $this->assertSame('draft', $history[0]['from_state']);
+        $this->assertSame('draft', $history[0]['to_state']);
+        $this->assertSame('', $history[0]['transition_id']);
+
+        $eventNames = array_map(static fn ($event): string => $event->fullEventName('workflow.event.'), $dispatcher->dispatchedEvents());
+        $this->assertSame(['workflow.event.instance_started', 'workflow.event.updated'], $eventNames);
+    }
+
+    public function test_database_engine_fails_transition_when_required_fields_are_missing(): void
+    {
+        $functions = new FunctionRegistry();
+        $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
+        $dispatcher = new Dispatcher('workflow.event.');
+        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+
+        $engine->activateDefinition('required_transition_fields', [
+            'dsl_version' => 2,
+            'name' => 'required_transition_fields',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved'],
+            'states' => ['draft', 'approved'],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'approved',
+                    'action' => 'submit',
+                    'transition_id' => 'tr_submit',
+                    'allowed_if' => [],
+                    'validation' => [
+                        'required' => ['comment', 'reason'],
+                    ],
+                ],
+            ],
+        ]);
+
+        $instance = $engine->start('required_transition_fields', [
+            'data' => ['comment' => 'already set'],
+        ]);
+
+        try {
+            $engine->execute($instance['instance_id'], 'submit', []);
+            $this->fail('Expected InvalidTransitionValidationException was not thrown');
+        } catch (InvalidTransitionValidationException) {
+            $this->assertTrue(true);
+        }
+
+        $persisted = $storage->getInstance($instance['instance_id']);
+        $this->assertSame('draft', $persisted['state']);
+        $this->assertSame(0, $persisted['version']);
+
+        $histories = $this->capsule->getConnection()->table('workflow_histories')->get();
+        $this->assertCount(0, $histories);
+
+        $eventNames = array_map(static fn ($event): string => $event->fullEventName('workflow.event.'), $dispatcher->dispatchedEvents());
+        $this->assertSame(['workflow.event.instance_started', 'workflow.event.transition_failed'], $eventNames);
+    }
+
+    public function test_database_engine_allows_transition_when_required_fields_are_present_after_merge(): void
+    {
+        $functions = new FunctionRegistry();
+        $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
+        $dispatcher = new Dispatcher('workflow.event.');
+        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+
+        $engine->activateDefinition('required_transition_fields', [
+            'dsl_version' => 2,
+            'name' => 'required_transition_fields',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved'],
+            'states' => ['draft', 'approved'],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'approved',
+                    'action' => 'submit',
+                    'transition_id' => 'tr_submit',
+                    'allowed_if' => [],
+                    'validation' => [
+                        'required' => ['comment', 'reason'],
+                    ],
+                ],
+            ],
+        ]);
+
+        $instance = $engine->start('required_transition_fields', [
+            'data' => ['comment' => 'already set'],
+        ]);
+
+        $updated = $engine->execute($instance['instance_id'], 'submit', [
+            'data' => ['reason' => 'manual completion'],
+        ]);
+
+        $this->assertSame('approved', $updated['state']);
+        $this->assertSame(1, $updated['version']);
+    }
+
     private function buildEngine(
         DatabaseWorkflowRepository $storage,
         EventDispatcherInterface $dispatcher,
@@ -538,6 +695,7 @@ class DatabaseWorkflowEngineTest extends TestCase
         $policy = new PolicyEngine($rules);
         $fields = new FieldEngine($rules);
         $executor = new TransitionExecutor($stateMachine, $policy, $storage, $dispatcher);
+        $updateExecutor = new UpdateExecutor($stateMachine, $policy, $fields, $storage, $dispatcher);
 
         return new WorkflowEngine(
             $storage,
@@ -549,7 +707,14 @@ class DatabaseWorkflowEngineTest extends TestCase
             $fields,
             $policy,
             $functions,
-            $dispatcher
+            $dispatcher,
+            null,
+            true,
+            300,
+            null,
+            'tenant-default',
+            false,
+            $updateExecutor
         );
     }
 }

@@ -92,4 +92,31 @@ class ExecutionBuilder
 
         return $result;
     }
+
+    /**
+     * @param array<string, mixed> $context
+     *
+     * @return array<string, mixed>
+     */
+    public function update(array $context = []): array
+    {
+        if ($this->instanceId === null || $this->instanceId === '') {
+            throw new WorkflowException('ExecutionBuilder requires an instance_id. Call forInstance() before update().', 7003);
+        }
+
+        foreach ($this->beforeHooks as $hook) {
+            $hook('update', $context, $this->instanceId);
+        }
+
+        $result = $this->engine->updateWithListeners($this->instanceId, $context, [
+            'named' => $this->listeners,
+            'any' => $this->anyListeners,
+        ]);
+
+        foreach ($this->afterHooks as $hook) {
+            $hook('update', $context, $result, $this->instanceId);
+        }
+
+        return $result;
+    }
 }

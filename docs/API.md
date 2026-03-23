@@ -8,7 +8,9 @@ Core runtime operations:
 
 - start
 - can
+- canUpdate
 - execute
+- update
 - visibleFields
 
 Runtime inspection operations:
@@ -108,6 +110,7 @@ execute(string $instanceId, string $action, array $context = []): array
 ### Behavior
 
 - Runs in storage transaction.
+- Enforces transition-level `validation.required` against merged `instance.data + context.data`.
 - Applies transition `mappings` when configured.
 - Requires `context.data` as array when mappings exist.
 - Validates mapping runtime modes for `relation` (`persist`, `reference_only`).
@@ -123,11 +126,64 @@ execute(string $instanceId, string $action, array $context = []): array
 ### execute Exceptions
 
 - `InvalidTransitionException`: no valid transition for current state/action.
+- `InvalidTransitionValidationException`: transition required fields are missing from merged payload.
 - `UnauthorizedTransitionException`: `allowed_if` rule denied execution.
 - `ContextValidationException`: missing/invalid context keys (for example `roles` or `data`).
 - `OptimisticLockException`: concurrent write conflict on instance update.
 - `MappingException`: mapping infrastructure/configuration error.
 - `WorkflowException`: general domain failure (including mapping handler errors).
+
+## canUpdate
+
+Answers whether an in-state update is executable now by the provided actor/context.
+
+### Signature
+
+```php
+canUpdate(string $instanceId, array $context = []): bool
+```
+
+### Behavior
+
+- Side-effect free.
+- Returns false for final states.
+- Evaluates state-level `permissions.update.allowed_if` through the policy/rule engine.
+- Evaluates state-level editable fields through `FieldEngine`.
+- When `context.data` is present, returns false if any provided key is not editable.
+
+## update
+
+Mutates workflow instance data in the current state without triggering a state transition.
+
+### Signature
+
+```php
+update(string $instanceId, array $context = []): array
+```
+
+### Required Inputs in context
+
+- data: array payload with requested field changes.
+
+### Behavior
+
+- Runs in storage transaction.
+- Resolves current state config and checks `permissions.update` authorization.
+- Validates all input keys are editable in current state.
+- Applies state mappings when configured, otherwise performs direct in-instance merge for editable fields.
+- Increments optimistic-lock version.
+- Appends history with `action=update` and `from_state == to_state`.
+- Queues `workflow.event.updated` and flushes after successful commit.
+- Runs execution-scoped inline listeners before global Laravel listeners.
+
+### update Exceptions
+
+- `UnauthorizedUpdateException`: update denied by state permission rules.
+- `InvalidUpdateException`: one or more input fields are not editable in current state.
+- `ContextValidationException`: missing/invalid `context.data`.
+- `OptimisticLockException`: concurrent write conflict on instance update.
+- `MappingException`: mapping infrastructure/configuration error.
+- `WorkflowException`: general domain failure.
 
 ## resolveMappedData
 
@@ -181,6 +237,7 @@ execution(?string $instanceId = null): ExecutionBuilder
 - `before(callable $callback): self`
 - `after(callable $callback): self`
 - `execute(string $action, array $context = []): array`
+- `update(array $context = []): array`
 
 ### Behavior
 
@@ -189,6 +246,7 @@ execution(?string $instanceId = null): ExecutionBuilder
 - `onAny()` listeners receive event name and payload.
 - `before()` hooks run before transition execution.
 - `after()` hooks run after successful transition execution and event flush.
+- `update()` uses the same lifecycle hooks and listener model as `execute()`.
 - Inline listeners are executed before global Laravel event listeners.
 - Workflow start emits `workflow.event.instance_started` with payload keys:
 	- `instance_id`
@@ -210,6 +268,7 @@ execution(?string $instanceId = null): ExecutionBuilder
 ### execution Exceptions
 
 - `WorkflowException` code `7002` when no instance ID was provided (`execution()` without `forInstance()` and without constructor instance).
+- `WorkflowException` code `7003` when no instance ID was provided for `update()`.
 
 ### Example
 
@@ -417,6 +476,8 @@ Common domain exceptions:
 - OptimisticLockException
 - ContextValidationException
 - MappingException
+- InvalidUpdateException
+- UnauthorizedUpdateException
 - ActiveSubjectInstanceExistsException
 - WorkflowException
 
@@ -442,4 +503,5 @@ With default prefix `workflow.event.`:
 
 - `workflow.event.instance_started`
 - `workflow.event.{effect_event_name}` (for each transition effect)
+- `workflow.event.updated`
 - `workflow.event.transition_failed`

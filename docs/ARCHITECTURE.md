@@ -35,7 +35,9 @@ Primary API methods (stable contract):
 
 - `start(workflowName, options)`
 - `can(instanceId, action, context)`
+- `canUpdate(instanceId, context)`
 - `execute(instanceId, action, context)`
+- `update(instanceId, context)`
 - `visibleFields(instanceId, context)`
 
 Also available:
@@ -50,8 +52,8 @@ Also available:
 
 - DSL layer (`Parser`, `Validator`, `Compiler`): reads DSL, validates constraints, creates `transition_index`.
 - Rules layer (`RuleEngine`, `ContextValidator`): evaluates `role`, `fn`, `all`, `any`, `not` safely.
-- Policies layer (`PolicyEngine`): applies `allowed_if` per transition.
-- Fields layer (`FieldEngine`): computes `visible` and `editable` field lists with rule guards.
+- Policies layer (`PolicyEngine`): applies `allowed_if` per transition and `permissions.update.allowed_if` per state.
+- Fields layer (`FieldEngine`): computes `visible` and `editable` field lists with rule guards, including state-level editable projection for in-state updates.
 - Engine layer (`WorkflowEngine`, `StateMachine`, `TransitionExecutor`, `ExecutionBuilder`): orchestration and lifecycle.
 - DataMapping layer (`DataMapper`): input write mapping and read-time resolution.
 - Functions layer (`FunctionRegistry`): whitelist for callable functions used by rules.
@@ -79,6 +81,7 @@ Validation rules currently enforced include:
 - `from + action` must be unique.
 - Rule `fn` names must exist in `FunctionRegistry`.
 - Mapping configs are validated by type and required keys.
+- Transition-level `validation.required` is validated as an array of non-empty string field names.
 
 ## 5. Execution Flow (`execute`)
 
@@ -122,6 +125,7 @@ Consistency model implemented today:
 - Definition version immutability per `(workflow_name, version, tenant_id)`.
 - Active definition uniqueness by scope (`active_scope` unique index).
 - History append happens in same transaction as state mutation.
+- In-state updates (`update`) follow the same transaction + optimistic-lock strategy.
 
 Why this matters:
 
@@ -170,6 +174,24 @@ Functions are resolved from `FunctionRegistry` and must be registered before DSL
 - Supports conditional gates: `visible_if`, `editable_if`.
 - Final states return empty result.
 
+For in-state updates:
+
+- `canUpdate()` and `update()` evaluate state-level editable fields.
+- Both transition-style field config (`editable`, `editable_if`) and per-field config (`field_name.editable`, `field_name.editable_if`) are supported.
+
+## 9.1 In-State Update Flow (`update`)
+
+`update()` is a state-preserving mutation path:
+
+1. Load instance and compiled definition.
+2. Resolve current state config.
+3. Evaluate `permissions.update` authorization.
+4. Validate/update only editable fields.
+5. Apply state mappings when configured.
+6. Persist instance data with optimistic lock (`version += 1`).
+7. Append history entry with `action=update` and unchanged state.
+8. Queue `updated` event and flush after commit.
+
 ## 10. Data Mapping Model
 
 Write path during `execute()`:
@@ -177,6 +199,7 @@ Write path during `execute()`:
 - Mapping is applied only if transition has `mappings`.
 - Requires `context.data` as array.
 - `DataMapper::map()` updates instance snapshot and returns mapping summary.
+- Before state mutation, transition required-field validation is enforced using merged `instance.data + context.data`.
 
 Read path via `resolveMappedData()`:
 

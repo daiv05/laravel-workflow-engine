@@ -17,6 +17,7 @@ use Daiv05\LaravelWorkflowEngine\DSL\Validator;
 use Daiv05\LaravelWorkflowEngine\DataMapping\DataMapper;
 use Daiv05\LaravelWorkflowEngine\Engine\StateMachine;
 use Daiv05\LaravelWorkflowEngine\Engine\TransitionExecutor;
+use Daiv05\LaravelWorkflowEngine\Engine\UpdateExecutor;
 use Daiv05\LaravelWorkflowEngine\Engine\WorkflowEngine;
 use Daiv05\LaravelWorkflowEngine\Events\Dispatcher;
 use Daiv05\LaravelWorkflowEngine\Diagnostics\LaravelDiagnosticsEmitter;
@@ -129,6 +130,15 @@ class WorkflowServiceProvider extends ServiceProvider
             $app->make(DataMapperInterface::class)
         ));
 
+        $this->app->singleton(UpdateExecutor::class, fn ($app) => new UpdateExecutor(
+            $app->make(StateMachine::class),
+            $app->make(PolicyEngine::class),
+            $app->make(FieldEngine::class),
+            $app->make(StorageRepositoryInterface::class),
+            $app->make(EventDispatcherInterface::class),
+            $app->make(DataMapperInterface::class)
+        ));
+
         $this->app->singleton(WorkflowEngine::class, function ($app): WorkflowEngine {
             $defaultTenantId = $app['config']->get('workflow.default_tenant_id');
 
@@ -152,7 +162,8 @@ class WorkflowServiceProvider extends ServiceProvider
                 (int) $app['config']->get('workflow.cache.ttl', 300),
                 $app->make(DataMapperInterface::class),
                 $defaultTenantId,
-                (bool) $app['config']->get('workflow.enforce_one_active_per_subject', false)
+                (bool) $app['config']->get('workflow.enforce_one_active_per_subject', false),
+                $app->make(UpdateExecutor::class)
             );
         });
 

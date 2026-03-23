@@ -48,4 +48,65 @@ class FieldEngine
 
         return ['visible' => $visible, 'editable' => $editable];
     }
+
+    /**
+     * Resolve editable fields for in-state updates.
+     *
+     * Supports both legacy shape:
+     * fields:
+     *   editable: [a, b]
+     *   editable_if: {...}
+     *
+     * and per-field shape:
+     * fields:
+     *   a: { editable: true, editable_if: {...} }
+     *   b: { editable: true }
+     *
+     * @param array<string, mixed> $stateConfig
+     * @param array<string, mixed> $context
+     *
+     * @return array<int, string>
+     */
+    public function editableFieldsForState(array $stateConfig, array $context): array
+    {
+        if (!isset($stateConfig['fields']) || !is_array($stateConfig['fields'])) {
+            return [];
+        }
+
+        /** @var array<string, mixed> $fields */
+        $fields = $stateConfig['fields'];
+        $editable = [];
+
+        if (isset($fields['editable']) && is_array($fields['editable'])) {
+            $editable = array_values(array_filter($fields['editable'], 'is_string'));
+
+            if (isset($fields['editable_if']) && is_array($fields['editable_if']) && !$this->rules->evaluate($fields['editable_if'], $context)) {
+                $editable = [];
+            }
+        }
+
+        $reserved = ['visible', 'editable', 'visible_if', 'editable_if'];
+
+        foreach ($fields as $fieldName => $config) {
+            if (!is_string($fieldName) || $fieldName === '' || in_array($fieldName, $reserved, true)) {
+                continue;
+            }
+
+            if (!is_array($config)) {
+                continue;
+            }
+
+            if (($config['editable'] ?? false) !== true) {
+                continue;
+            }
+
+            if (isset($config['editable_if']) && is_array($config['editable_if']) && !$this->rules->evaluate($config['editable_if'], $context)) {
+                continue;
+            }
+
+            $editable[] = $fieldName;
+        }
+
+        return array_values(array_unique($editable));
+    }
 }

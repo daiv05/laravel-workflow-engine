@@ -21,9 +21,23 @@ interface WorkflowEngineInterface
     public function execute(string $instanceId, string $action, array $context = []): array;
 
     /**
+     * Update workflow data in the current state without triggering a transition.
+     *
+     * @param array<string, mixed> $context
+     *
+     * @return array<string, mixed>
+     */
+    public function update(string $instanceId, array $context = []): array;
+
+    /**
      * @param array<string, mixed> $context
      */
     public function can(string $instanceId, string $action, array $context = []): bool;
+
+    /**
+     * @param array<string, mixed> $context
+     */
+    public function canUpdate(string $instanceId, array $context = []): bool;
 
     /**
      * @param array<string, mixed> $context

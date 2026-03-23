@@ -9,6 +9,7 @@ use Daiv05\LaravelWorkflowEngine\DSL\Parser;
 use Daiv05\LaravelWorkflowEngine\DSL\Validator;
 use Daiv05\LaravelWorkflowEngine\Engine\StateMachine;
 use Daiv05\LaravelWorkflowEngine\Engine\TransitionExecutor;
+use Daiv05\LaravelWorkflowEngine\Engine\UpdateExecutor;
 use Daiv05\LaravelWorkflowEngine\Engine\WorkflowEngine;
 use Daiv05\LaravelWorkflowEngine\Events\Dispatcher;
 use Daiv05\LaravelWorkflowEngine\Fields\FieldEngine;
@@ -33,6 +34,7 @@ class WorkflowEngineCacheTest extends TestCase
         $fields = new FieldEngine($rules);
         $events = new Dispatcher('workflow.event.');
         $executor = new TransitionExecutor($stateMachine, $policy, $storage, $events);
+        $updateExecutor = new UpdateExecutor($stateMachine, $policy, $fields, $storage, $events);
 
         $engine = new WorkflowEngine(
             $storage,
@@ -50,6 +52,9 @@ class WorkflowEngineCacheTest extends TestCase
             300,
             null,
             'tenant-fixed'
+            ,
+            false,
+            $updateExecutor
         );
 
         $engine->activateDefinition('fixed_scope', [
@@ -89,6 +94,7 @@ class WorkflowEngineCacheTest extends TestCase
         $fields = new FieldEngine($rules);
         $events = new Dispatcher('workflow.event.');
         $executor = new TransitionExecutor($stateMachine, $policy, $storage, $events);
+        $updateExecutor = new UpdateExecutor($stateMachine, $policy, $fields, $storage, $events);
 
         $engine = new WorkflowEngine(
             $storage,
@@ -100,7 +106,14 @@ class WorkflowEngineCacheTest extends TestCase
             $fields,
             $policy,
             $functions,
-            $events
+            $events,
+            null,
+            true,
+            300,
+            null,
+            'tenant-default',
+            false,
+            $updateExecutor
         );
 
         $engine->activateDefinition('cache_test', [

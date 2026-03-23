@@ -30,7 +30,9 @@ class Validator
             throw DSLValidationException::withPath('states must be a non-empty array', 'states');
         }
 
-        if (!in_array($definition['initial_state'], $definition['states'], true)) {
+        $stateNames = $this->extractStateNames($definition['states']);
+
+        if (!in_array($definition['initial_state'], $stateNames, true)) {
             throw DSLValidationException::withPath('initial_state must exist in states', 'initial_state');
         }
 
@@ -39,7 +41,7 @@ class Validator
         }
 
         foreach ($definition['final_states'] as $index => $finalState) {
-            if (!in_array($finalState, $definition['states'], true)) {
+            if (!in_array($finalState, $stateNames, true)) {
                 throw DSLValidationException::withPath('final_state must exist in states', 'final_states.' . $index);
             }
         }
@@ -53,7 +55,8 @@ class Validator
 
         foreach ($definition['transitions'] as $index => $transition) {
             $path = 'transitions.' . $index;
-            $this->validateTransition($transition, $definition['states'], $path);
+            $this->validateTransition($transition, $stateNames, $path);
+            $this->validateTransitionValidation($transition, $path);
             $this->validateRuleFunctions($transition['allowed_if'] ?? [], $path . '.allowed_if');
             $this->validateFieldRules($transition, $path);
             $this->validateMappings($transition, $path);
@@ -64,6 +67,98 @@ class Validator
             }
 
             $uniqueTransitionPerState[$uniqueKey] = true;
+        }
+
+        $this->validateStatesConfig($definition['states']);
+    }
+
+    /**
+     * @param array<int, mixed> $states
+     *
+     * @return array<int, string>
+     */
+    private function extractStateNames(array $states): array
+    {
+        $stateNames = [];
+
+        foreach ($states as $index => $state) {
+            if (is_string($state) && $state !== '') {
+                $stateNames[] = $state;
+                continue;
+            }
+
+            if (is_array($state) && isset($state['name']) && is_string($state['name']) && $state['name'] !== '') {
+                $stateNames[] = $state['name'];
+                continue;
+            }
+
+            throw DSLValidationException::withPath('each state must be a non-empty string or an object with non-empty name', 'states.' . $index);
+        }
+
+        return $stateNames;
+    }
+
+    /**
+     * @param array<int, mixed> $states
+     */
+    private function validateStatesConfig(array $states): void
+    {
+        foreach ($states as $index => $state) {
+            if (!is_array($state)) {
+                continue;
+            }
+
+            $path = 'states.' . $index;
+
+            if (isset($state['permissions']) && is_array($state['permissions']) && isset($state['permissions']['update'])) {
+                $update = $state['permissions']['update'];
+
+                if (!is_bool($update) && !is_array($update)) {
+                    throw DSLValidationException::withPath('permissions.update must be a boolean or object', $path . '.permissions.update');
+                }
+
+                if (is_array($update) && isset($update['allowed_if'])) {
+                    $this->validateRuleFunctions($update['allowed_if'], $path . '.permissions.update.allowed_if');
+                }
+            }
+
+            if (isset($state['fields']) && is_array($state['fields'])) {
+                $this->validateStateFieldRules($state['fields'], $path . '.fields');
+            }
+
+            $this->validateMappings($state, $path);
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $fields
+     */
+    private function validateStateFieldRules(array $fields, string $path): void
+    {
+        if (isset($fields['visible_if'])) {
+            $this->validateRuleFunctions($fields['visible_if'], $path . '.visible_if');
+        }
+
+        if (isset($fields['editable_if'])) {
+            $this->validateRuleFunctions($fields['editable_if'], $path . '.editable_if');
+        }
+
+        foreach ($fields as $fieldName => $config) {
+            if (!is_string($fieldName) || $fieldName === '' || in_array($fieldName, ['visible', 'editable', 'visible_if', 'editable_if'], true)) {
+                continue;
+            }
+
+            if (!is_array($config)) {
+                continue;
+            }
+
+            if (isset($config['editable_if'])) {
+                $this->validateRuleFunctions($config['editable_if'], $path . '.' . $fieldName . '.editable_if');
+            }
+
+            if (isset($config['visible_if'])) {
+                $this->validateRuleFunctions($config['visible_if'], $path . '.' . $fieldName . '.visible_if');
+            }
         }
     }
 
@@ -143,6 +238,37 @@ class Validator
 
         if (isset($fields['editable_if'])) {
             $this->validateRuleFunctions($fields['editable_if'], $path . '.fields.editable_if');
+        }
+    }
+
+    /**
+     * @param array<string, mixed> $transition
+     */
+    private function validateTransitionValidation(array $transition, string $path): void
+    {
+        if (!array_key_exists('validation', $transition)) {
+            return;
+        }
+
+        if (!is_array($transition['validation'])) {
+            throw DSLValidationException::withPath('validation must be an object-like array', $path . '.validation');
+        }
+
+        if (!array_key_exists('required', $transition['validation'])) {
+            return;
+        }
+
+        if (!is_array($transition['validation']['required'])) {
+            throw DSLValidationException::withPath('validation.required must be an array', $path . '.validation.required');
+        }
+
+        foreach ($transition['validation']['required'] as $index => $field) {
+            if (!is_string($field) || $field === '') {
+                throw DSLValidationException::withPath(
+                    'validation.required entries must be non-empty strings',
+                    $path . '.validation.required.' . $index
+                );
+            }
         }
     }
 

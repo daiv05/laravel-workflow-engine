@@ -10,6 +10,7 @@ use Daiv05\LaravelWorkflowEngine\Contracts\EventDispatcherInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\StorageRepositoryInterface;
 use Daiv05\LaravelWorkflowEngine\Exceptions\ContextValidationException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\InvalidTransitionException;
+use Daiv05\LaravelWorkflowEngine\Exceptions\InvalidTransitionValidationException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\MappingException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\UnauthorizedTransitionException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\WorkflowException;
@@ -74,6 +75,8 @@ class TransitionExecutor
                 if (!$this->policy->canExecuteTransition($transition, $context)) {
                     throw UnauthorizedTransitionException::forTransition($action, (string) $instance['state'], $context);
                 }
+
+                $this->enforceTransitionRequiredFields($transition, $instance, $context);
 
                 $fromState = (string) $instance['state'];
                 $newState = (string) $transition['to'];
@@ -319,6 +322,45 @@ class TransitionExecutor
                 'action' => $action,
             ]
         );
+    }
+
+    /**
+     * @param array<string, mixed> $transition
+     * @param array<string, mixed> $instance
+     * @param array<string, mixed> $context
+     */
+    private function enforceTransitionRequiredFields(array $transition, array $instance, array $context): void
+    {
+        if (!is_array($transition['validation'] ?? null)) {
+            return;
+        }
+
+        if (!is_array($transition['validation']['required'] ?? null)) {
+            return;
+        }
+
+        $instanceData = is_array($instance['data'] ?? null) ? $instance['data'] : [];
+        $contextData = is_array($context['data'] ?? null) ? $context['data'] : [];
+        $mergedData = array_replace($instanceData, $contextData);
+        $missing = [];
+
+        foreach ($transition['validation']['required'] as $fieldName) {
+            if (!is_string($fieldName) || $fieldName === '') {
+                continue;
+            }
+
+            if (!array_key_exists($fieldName, $mergedData) || $mergedData[$fieldName] === null) {
+                $missing[] = $fieldName;
+            }
+        }
+
+        if ($missing !== []) {
+            throw InvalidTransitionValidationException::forMissingRequiredFields(
+                (string) ($instance['state'] ?? ''),
+                (string) ($transition['action'] ?? ''),
+                $missing
+            );
+        }
     }
 
     /**

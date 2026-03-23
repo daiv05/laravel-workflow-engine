@@ -15,6 +15,23 @@ class Compiler
     {
         $compiled = $definition;
 
+        $compiled['states'] = [];
+        $compiled['state_configs'] = [];
+
+        foreach ($definition['states'] as $state) {
+            if (is_string($state) && $state !== '') {
+                $compiled['states'][] = $state;
+                $compiled['state_configs'][$state] = ['name' => $state];
+                continue;
+            }
+
+            if (is_array($state) && isset($state['name']) && is_string($state['name']) && $state['name'] !== '') {
+                $stateName = $state['name'];
+                $compiled['states'][] = $stateName;
+                $compiled['state_configs'][$stateName] = $state;
+            }
+        }
+
         $compiled['transition_index'] = [];
 
         foreach ($definition['transitions'] as $transition) {

@@ -43,7 +43,8 @@ class WorkflowEngine implements WorkflowEngineInterface
         private readonly int $cacheTtl = 300,
         private readonly ?DataMapperInterface $dataMapper = null,
         private readonly string $defaultTenantId = 'tenant-default',
-        private readonly bool $enforceOneActivePerSubject = false
+        private readonly bool $enforceOneActivePerSubject = false,
+        private readonly ?UpdateExecutor $updateExecutor = null
     ) {
     }
 
@@ -134,6 +135,16 @@ class WorkflowEngine implements WorkflowEngineInterface
 
     /**
      * @param array<string, mixed> $context
+     *
+     * @return array<string, mixed>
+     */
+    public function update(string $instanceId, array $context = []): array
+    {
+        return $this->updateWithListeners($instanceId, $context);
+    }
+
+    /**
+     * @param array<string, mixed> $context
      * @param array<string, mixed> $listeners
      *
      * @return array<string, mixed>
@@ -171,6 +182,32 @@ class WorkflowEngine implements WorkflowEngineInterface
         } catch (\Throwable) {
             return false;
         }
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     */
+    public function canUpdate(string $instanceId, array $context = []): bool
+    {
+        $instance = $this->storage->getInstance($instanceId);
+        $definition = $this->getDefinitionByIdCached((int) $instance['workflow_definition_id']);
+        $contextWithSubject = $this->contextWithSubject($instance, $context);
+
+        return $this->getUpdateExecutor()->canUpdate($instance, $definition, $contextWithSubject);
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     * @param array<string, mixed> $listeners
+     *
+     * @return array<string, mixed>
+     */
+    public function updateWithListeners(string $instanceId, array $context = [], array $listeners = []): array
+    {
+        $instance = $this->storage->getInstance($instanceId);
+        $definition = $this->getDefinitionByIdCached((int) $instance['workflow_definition_id']);
+        $contextWithSubject = $this->contextWithSubject($instance, $context);
+        return $this->getUpdateExecutor()->executeWithListeners($instance, $definition, $contextWithSubject, $listeners);
     }
 
     /**
@@ -594,5 +631,14 @@ class WorkflowEngine implements WorkflowEngineInterface
         }
 
         return false;
+    }
+
+    private function getUpdateExecutor(): UpdateExecutor
+    {
+        if ($this->updateExecutor === null) {
+            throw new \LogicException('UpdateExecutor must be injected into WorkflowEngine.');
+        }
+
+        return $this->updateExecutor;
     }
 }

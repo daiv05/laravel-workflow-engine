@@ -70,6 +70,7 @@ Optional transition sections:
 - `fields`
 - `effects`
 - `mappings`
+- `validation`
 
 ## Rule DSL (`allowed_if`, `fields.visible_if`, `fields.editable_if`)
 
@@ -141,6 +142,27 @@ Execution-time mapping behavior:
 - `custom`: delegates write to handler class declared in mapping.
 - Mapping writes are transactional with state/history update.
 - If mapping throws and fail-silent mode is disabled, transition is rolled back.
+
+## Transition Validation Section
+
+`validation` is optional and transition-local.
+
+Currently supported key:
+
+- `required`: array of non-empty string field names.
+
+Validation rules:
+
+- `validation` must be an object-like array when present.
+- `validation.required` must be an array when present.
+- Every `validation.required` entry must be a non-empty string.
+
+Execution behavior:
+
+- Required fields are evaluated against merged data: `instance.data + context.data`.
+- `context.data` overrides `instance.data` when both contain the same key.
+- Transition execution fails when any required key is missing or resolves to `null` after merge.
+- On failure, state/history mutation is rolled back and `workflow.event.transition_failed` is emitted.
 
 Read-time mapping behavior (`resolveMappedData`):
 
