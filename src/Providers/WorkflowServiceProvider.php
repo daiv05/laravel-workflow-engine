@@ -12,6 +12,9 @@ use Daiv05\LaravelWorkflowEngine\Contracts\OutboxStoreInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\RuleEngineInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\StorageRepositoryInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\StorageBindingResolverInterface;
+use Daiv05\LaravelWorkflowEngine\Contracts\WorkflowEngineInterface;
+use Daiv05\LaravelWorkflowEngine\Contracts\WorkflowManagerInterface;
+use Daiv05\LaravelWorkflowEngine\Console\Commands\MakeWorkflowCommand;
 use Daiv05\LaravelWorkflowEngine\DSL\Compiler;
 use Daiv05\LaravelWorkflowEngine\DSL\Parser;
 use Daiv05\LaravelWorkflowEngine\DSL\Validator;
@@ -185,6 +188,8 @@ class WorkflowServiceProvider extends ServiceProvider
                 $app->make(UpdateExecutor::class)
             );
         });
+        $this->app->alias(WorkflowEngine::class, WorkflowEngineInterface::class);
+        $this->app->alias(WorkflowEngine::class, WorkflowManagerInterface::class);
 
         $this->app->singleton('workflow', fn ($app) => $app->make(WorkflowEngine::class));
     }
@@ -192,6 +197,10 @@ class WorkflowServiceProvider extends ServiceProvider
     public function boot(): void
     {
         $this->loadMigrationsFrom(__DIR__ . '/../../database/migrations');
+
+        if ($this->app->runningInConsole()) {
+            $this->commands([MakeWorkflowCommand::class]);
+        }
 
         $configTarget = method_exists($this->app, 'configPath')
             ? $this->app->configPath('workflow.php')

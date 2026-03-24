@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Daiv05\LaravelWorkflowEngine\Tests\Unit;
 
+use Daiv05\LaravelWorkflowEngine\Contracts\ExecutionBuilderInterface;
 use Daiv05\LaravelWorkflowEngine\Engine\ExecutionBuilder;
 use Daiv05\LaravelWorkflowEngine\Engine\WorkflowEngine;
 use Daiv05\LaravelWorkflowEngine\Exceptions\WorkflowException;
@@ -11,6 +12,14 @@ use PHPUnit\Framework\TestCase;
 
 class ExecutionBuilderTest extends TestCase
 {
+    public function test_it_implements_public_execution_builder_contract(): void
+    {
+        $engine = $this->createMock(WorkflowEngine::class);
+        $builder = new ExecutionBuilder($engine);
+
+        $this->assertInstanceOf(ExecutionBuilderInterface::class, $builder);
+    }
+
     public function test_execute_throws_when_instance_id_is_missing(): void
     {
         $engine = $this->createMock(WorkflowEngine::class);
