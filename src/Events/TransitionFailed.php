@@ -15,9 +15,10 @@ class TransitionFailed extends WorkflowEvent
         public readonly string $action,
         public readonly array $exception,
         ?array $subject = null,
-        ?string $tenantId = null
+        ?string $tenantId = null,
+        ?string $outboxTable = null
     ) {
-        parent::__construct('transition_failed', $subject, $tenantId);
+        parent::__construct('transition_failed', $subject, $tenantId, $outboxTable);
     }
 
     /**

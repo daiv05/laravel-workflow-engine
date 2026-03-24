@@ -8,6 +8,7 @@ use Daiv05\LaravelWorkflowEngine\DSL\Parser;
 use Daiv05\LaravelWorkflowEngine\DSL\Validator;
 use Daiv05\LaravelWorkflowEngine\Exceptions\DSLValidationException;
 use Daiv05\LaravelWorkflowEngine\Functions\FunctionRegistry;
+use Daiv05\LaravelWorkflowEngine\Storage\ConfigStorageBindingResolver;
 use PHPUnit\Framework\TestCase;
 
 class ValidatorTest extends TestCase
@@ -41,6 +42,78 @@ class ValidatorTest extends TestCase
         $validator->validate($definition);
 
         $this->assertTrue(true);
+    }
+
+    public function test_it_validates_storage_configuration_for_definition_runtime_tables(): void
+    {
+        $validator = new Validator(
+            new FunctionRegistry(),
+            new ConfigStorageBindingResolver([
+                'termination_binding' => [
+                    'instances_table' => 'wf_termination_instances',
+                    'histories_table' => 'wf_termination_histories',
+                    'outbox_table' => 'wf_termination_outbox',
+                ],
+            ])
+        );
+
+        $validator->validate([
+            'dsl_version' => 2,
+            'name' => 'termination_request',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved'],
+            'storage' => [
+                'binding' => 'termination_binding',
+            ],
+            'states' => ['draft', 'approved'],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'approved',
+                    'action' => 'approve',
+                    'transition_id' => 'tr_approve',
+                    'allowed_if' => [],
+                ],
+            ],
+        ]);
+
+        $this->assertTrue(true);
+    }
+
+    public function test_it_fails_when_storage_table_name_is_invalid(): void
+    {
+        $this->expectException(DSLValidationException::class);
+
+        $validator = new Validator(
+            new FunctionRegistry(),
+            new ConfigStorageBindingResolver([
+                'bad_binding' => [
+                    'instances_table' => 'wf-runtime-instances',
+                    'histories_table' => 'wf_runtime_histories',
+                ],
+            ])
+        );
+        $validator->validate([
+            'dsl_version' => 2,
+            'name' => 'termination_request',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved'],
+            'storage' => [
+                'binding' => 'bad_binding',
+            ],
+            'states' => ['draft', 'approved'],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'approved',
+                    'action' => 'approve',
+                    'transition_id' => 'tr_approve',
+                    'allowed_if' => [],
+                ],
+            ],
+        ]);
     }
 
     public function test_it_fails_when_function_reference_is_missing(): void

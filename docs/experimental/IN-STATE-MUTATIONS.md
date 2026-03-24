@@ -1,7 +1,3 @@
-Aquí tienes un **Feature Design Document completo** para la funcionalidad de **State Updates (mutations sin transición)**, integrado con todo lo que ya definiste (mappings, subject, events, etc.).
-
----
-
 # 📄 Feature Design Document
 
 ## State Updates (In-State Mutations)

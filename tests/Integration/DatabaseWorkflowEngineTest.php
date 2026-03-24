@@ -23,6 +23,7 @@ use Daiv05\LaravelWorkflowEngine\Policies\PolicyEngine;
 use Daiv05\LaravelWorkflowEngine\Rules\RuleEngine;
 use Daiv05\LaravelWorkflowEngine\Storage\DatabaseOutboxStore;
 use Daiv05\LaravelWorkflowEngine\Storage\DatabaseWorkflowRepository;
+use Daiv05\LaravelWorkflowEngine\Storage\ConfigStorageBindingResolver;
 use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Schema\Blueprint;
 use PHPUnit\Framework\TestCase;
@@ -77,6 +78,22 @@ class DatabaseWorkflowEngineTest extends TestCase
             $table->index(['workflow_definition_id', 'subject_type', 'subject_id'], 'wf_instance_definition_subject_idx');
         });
 
+        $schema->create('workflow_instance_locator', function (Blueprint $table): void {
+            $table->uuid('instance_id')->primary();
+            $table->unsignedBigInteger('workflow_definition_id');
+            $table->string('instances_table');
+            $table->string('histories_table');
+            $table->string('tenant_id')->nullable();
+            $table->string('state');
+            $table->string('subject_type')->nullable();
+            $table->string('subject_id')->nullable();
+            $table->timestamps();
+
+            $table->index(['workflow_definition_id'], 'wf_locator_definition_idx');
+            $table->index(['tenant_id', 'subject_type', 'subject_id'], 'wf_locator_subject_lookup_idx');
+            $table->index(['workflow_definition_id', 'subject_type', 'subject_id'], 'wf_locator_definition_subject_idx');
+        });
+
         $schema->create('workflow_histories', function (Blueprint $table): void {
             $table->id();
             $table->uuid('instance_id');
@@ -102,6 +119,11 @@ class DatabaseWorkflowEngineTest extends TestCase
             $table->timestamps();
 
             $table->index(['status', 'attempts', 'created_at'], 'wf_outbox_status_attempts_created_idx');
+        });
+
+        $schema->create('workflow_outbox_tables', function (Blueprint $table): void {
+            $table->string('table_name')->primary();
+            $table->timestamp('registered_at')->nullable();
         });
     }
 
@@ -326,10 +348,30 @@ class DatabaseWorkflowEngineTest extends TestCase
         $functions->register('isHR', static fn (array $context): bool => in_array('HR', $context['roles'] ?? [], true));
 
         $connection = $this->capsule->getConnection();
-        $storage = new DatabaseWorkflowRepository($connection);
+        $resolver = new ConfigStorageBindingResolver([
+            'default' => [
+                'instances_table' => 'workflow_instances',
+                'histories_table' => 'workflow_histories',
+                'outbox_table' => 'workflow_outbox',
+            ],
+            'custom_storage_binding' => [
+                'instances_table' => 'wf_custom_storage_instances',
+                'histories_table' => 'wf_custom_storage_histories',
+                'outbox_table' => 'wf_custom_storage_outbox',
+            ],
+        ]);
+
+        $storage = new DatabaseWorkflowRepository(
+            $connection,
+            'workflow_definitions',
+            'workflow_instance_locator',
+            'workflow_instances',
+            'workflow_histories',
+            $resolver
+        );
         $outbox = new DatabaseOutboxStore($connection);
         $dispatcher = new Dispatcher('workflow.event.', null, $outbox);
-        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+        $engine = $this->buildEngine($storage, $dispatcher, $functions, $resolver);
 
         $engine->activateDefinition('termination_request', [
             'dsl_version' => 2,
@@ -427,6 +469,75 @@ class DatabaseWorkflowEngineTest extends TestCase
         $this->assertSame($context, $payload['context']);
         $this->assertSame('analytics', $payload['meta']['bus']);
         $this->assertSame(true, $payload['meta']['flags']['replayable']);
+    }
+
+    public function test_database_engine_routes_instance_history_and_outbox_to_definition_storage_tables(): void
+    {
+        $functions = new FunctionRegistry();
+
+        $connection = $this->capsule->getConnection();
+        $resolver = new ConfigStorageBindingResolver([
+            'default' => [
+                'instances_table' => 'workflow_instances',
+                'histories_table' => 'workflow_histories',
+                'outbox_table' => 'workflow_outbox',
+            ],
+            'custom_storage_binding' => [
+                'instances_table' => 'wf_custom_storage_instances',
+                'histories_table' => 'wf_custom_storage_histories',
+                'outbox_table' => 'wf_custom_storage_outbox',
+            ],
+        ]);
+
+        $storage = new DatabaseWorkflowRepository(
+            $connection,
+            'workflow_definitions',
+            'workflow_instance_locator',
+            'workflow_instances',
+            'workflow_histories',
+            $resolver
+        );
+        $outbox = new DatabaseOutboxStore($connection);
+        $dispatcher = new Dispatcher('workflow.event.', null, $outbox);
+        $engine = $this->buildEngine($storage, $dispatcher, $functions, $resolver);
+
+        $engine->activateDefinition('custom_storage_flow', [
+            'dsl_version' => 2,
+            'name' => 'custom_storage_flow',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['done'],
+            'storage' => [
+                'binding' => 'custom_storage_binding',
+            ],
+            'states' => ['draft', 'done'],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'done',
+                    'action' => 'finish',
+                    'transition_id' => 'tr_finish_custom_storage',
+                    'allowed_if' => [],
+                    'effects' => [
+                        ['event' => 'custom_storage_finished'],
+                    ],
+                ],
+            ],
+        ]);
+
+        $instance = $engine->start('custom_storage_flow');
+        $engine->execute($instance['instance_id'], 'finish');
+
+        $this->assertNotNull($connection->table('wf_custom_storage_instances')->where('instance_id', $instance['instance_id'])->first());
+        $this->assertCount(1, $connection->table('wf_custom_storage_histories')->where('instance_id', $instance['instance_id'])->get());
+        $customOutboxRows = $connection->table('wf_custom_storage_outbox')->get();
+        $defaultOutboxRows = $connection->table('workflow_outbox')->get();
+
+        $this->assertGreaterThanOrEqual(1, count($customOutboxRows));
+        $this->assertSame(2, count($customOutboxRows) + count($defaultOutboxRows));
+
+        $this->assertNull($connection->table('workflow_instances')->where('instance_id', $instance['instance_id'])->first());
+        $this->assertCount(0, $connection->table('workflow_histories')->where('instance_id', $instance['instance_id'])->get());
     }
 
     public function test_database_engine_blocks_transitions_from_final_state_even_if_configured(): void
@@ -685,10 +796,11 @@ class DatabaseWorkflowEngineTest extends TestCase
     private function buildEngine(
         DatabaseWorkflowRepository $storage,
         EventDispatcherInterface $dispatcher,
-        FunctionRegistry $functions
+        FunctionRegistry $functions,
+        ?ConfigStorageBindingResolver $storageBindingResolver = null
     ): WorkflowEngine {
         $parser = new Parser();
-        $validator = new Validator($functions);
+        $validator = new Validator($functions, $storageBindingResolver);
         $compiler = new Compiler();
         $stateMachine = new StateMachine();
         $rules = new RuleEngine($functions);

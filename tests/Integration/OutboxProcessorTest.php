@@ -43,6 +43,11 @@ class OutboxProcessorTest extends TestCase
 
             $table->index(['status', 'attempts', 'created_at'], 'wf_outbox_status_attempts_created_idx');
         });
+
+        $schema->create('workflow_outbox_tables', function (Blueprint $table): void {
+            $table->string('table_name')->primary();
+            $table->timestamp('registered_at')->nullable();
+        });
     }
 
     public function test_it_dispatches_pending_outbox_records_and_marks_them_dispatched(): void
@@ -59,8 +64,8 @@ class OutboxProcessorTest extends TestCase
         $this->assertSame(['processed' => 2, 'dispatched' => 2, 'failed' => 0], $result);
         $this->assertCount(2, $dispatcher->dispatched);
 
-        $rowA = $this->capsule->getConnection()->table('workflow_outbox')->where('id', $idA)->first();
-        $rowB = $this->capsule->getConnection()->table('workflow_outbox')->where('id', $idB)->first();
+        $rowA = $this->capsule->getConnection()->table('workflow_outbox')->where('id', $this->rawId($idA))->first();
+        $rowB = $this->capsule->getConnection()->table('workflow_outbox')->where('id', $this->rawId($idB))->first();
 
         $this->assertSame('dispatched', $rowA->status);
         $this->assertSame('dispatched', $rowB->status);
@@ -81,7 +86,7 @@ class OutboxProcessorTest extends TestCase
         $first = $processorFail->processPending(50, 5);
         $this->assertSame(['processed' => 1, 'dispatched' => 0, 'failed' => 1], $first);
 
-        $afterFailure = $this->capsule->getConnection()->table('workflow_outbox')->where('id', $id)->first();
+        $afterFailure = $this->capsule->getConnection()->table('workflow_outbox')->where('id', $this->rawId($id))->first();
         $this->assertSame('failed', $afterFailure->status);
         $this->assertSame(1, (int) $afterFailure->attempts);
         $this->assertNotNull($afterFailure->last_error);
@@ -93,7 +98,7 @@ class OutboxProcessorTest extends TestCase
 
         $this->assertSame(['processed' => 1, 'dispatched' => 1, 'failed' => 0], $second);
 
-        $afterRetry = $this->capsule->getConnection()->table('workflow_outbox')->where('id', $id)->first();
+        $afterRetry = $this->capsule->getConnection()->table('workflow_outbox')->where('id', $this->rawId($id))->first();
         $this->assertSame('dispatched', $afterRetry->status);
         $this->assertNotNull($afterRetry->dispatched_at);
         $this->assertNull($afterRetry->last_error);
@@ -105,7 +110,7 @@ class OutboxProcessorTest extends TestCase
 
         $id = $store->store('workflow.event.never_retry', ['k' => 1]);
 
-        $this->capsule->getConnection()->table('workflow_outbox')->where('id', $id)->update([
+        $this->capsule->getConnection()->table('workflow_outbox')->where('id', $this->rawId($id))->update([
             'status' => 'failed',
             'attempts' => 5,
         ]);
@@ -117,6 +122,17 @@ class OutboxProcessorTest extends TestCase
 
         $this->assertSame(['processed' => 0, 'dispatched' => 0, 'failed' => 0], $result);
         $this->assertCount(0, $dispatcher->dispatched);
+    }
+
+    private function rawId(string $pointer): string
+    {
+        $parts = explode('::', $pointer, 2);
+
+        if (count($parts) !== 2) {
+            return $pointer;
+        }
+
+        return $parts[1];
     }
 
     public function test_it_emits_diagnostics_for_outbox_processing(): void

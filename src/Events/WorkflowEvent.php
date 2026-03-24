@@ -9,13 +9,19 @@ abstract class WorkflowEvent
     public function __construct(
         public readonly string $eventName,
         public readonly ?array $subject = null,
-        public readonly ?string $tenantId = null
+        public readonly ?string $tenantId = null,
+        public readonly ?string $outboxTable = null
     ) {
     }
 
     public function fullEventName(string $prefix): string
     {
         return $prefix . $this->eventName;
+    }
+
+    public function outboxTable(): ?string
+    {
+        return $this->outboxTable;
     }
 
     /**

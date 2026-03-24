@@ -5,12 +5,19 @@ declare(strict_types=1);
 namespace Daiv05\LaravelWorkflowEngine\DSL;
 
 use Daiv05\LaravelWorkflowEngine\Contracts\FunctionRegistryInterface;
+use Daiv05\LaravelWorkflowEngine\Contracts\StorageBindingResolverInterface;
 use Daiv05\LaravelWorkflowEngine\Exceptions\DSLValidationException;
+use Daiv05\LaravelWorkflowEngine\Storage\ConfigStorageBindingResolver;
 
 class Validator
 {
-    public function __construct(private readonly FunctionRegistryInterface $functions)
-    {
+    private readonly StorageBindingResolverInterface $storageBindingResolver;
+
+    public function __construct(
+        private readonly FunctionRegistryInterface $functions,
+        ?StorageBindingResolverInterface $storageBindingResolver = null
+    ) {
+        $this->storageBindingResolver = $storageBindingResolver ?? new ConfigStorageBindingResolver();
     }
 
     /**
@@ -25,6 +32,8 @@ class Validator
                 throw DSLValidationException::withPath('Missing required key: ' . $key, $key);
             }
         }
+
+        $this->validateStorageConfig($definition);
 
         if (!is_array($definition['states']) || $definition['states'] === []) {
             throw DSLValidationException::withPath('states must be a non-empty array', 'states');
@@ -330,5 +339,65 @@ class Validator
                 }
             }
         }
+    }
+
+    /**
+     * @param array<string, mixed> $definition
+     */
+    private function validateStorageConfig(array $definition): void
+    {
+        if (!array_key_exists('storage', $definition)) {
+            return;
+        }
+
+        if (!is_array($definition['storage'])) {
+            throw DSLValidationException::withPath('storage must be an object-like array', 'storage');
+        }
+
+        $storage = $definition['storage'];
+
+        foreach (['instances_table', 'histories_table', 'outbox_table'] as $directKey) {
+            if (array_key_exists($directKey, $storage)) {
+                throw DSLValidationException::withPath(
+                    'Direct storage table keys are not allowed. Use storage.binding',
+                    'storage.' . $directKey
+                );
+            }
+        }
+
+        if (!array_key_exists('binding', $storage)) {
+            throw DSLValidationException::withPath('storage requires key: binding', 'storage.binding');
+        }
+
+        if (!is_string($storage['binding']) || trim($storage['binding']) === '') {
+            throw DSLValidationException::withPath('storage.binding must be a non-empty string', 'storage.binding');
+        }
+
+        try {
+            $resolved = $this->storageBindingResolver->resolveFromStorage($storage);
+        } catch (\Throwable $exception) {
+            throw DSLValidationException::withPath('Invalid storage binding: ' . $exception->getMessage(), 'storage.binding');
+        }
+
+        foreach (['instances_table', 'histories_table'] as $requiredTableKey) {
+            if (!$this->isValidTableName($resolved[$requiredTableKey] ?? null)) {
+                throw DSLValidationException::withPath(
+                    'resolved storage table name must match pattern [A-Za-z_][A-Za-z0-9_]*',
+                    'storage.binding'
+                );
+            }
+        }
+
+        if (($resolved['outbox_table'] ?? null) !== null && !$this->isValidTableName($resolved['outbox_table'])) {
+            throw DSLValidationException::withPath(
+                'resolved storage table name must match pattern [A-Za-z_][A-Za-z0-9_]*',
+                'storage.binding'
+            );
+        }
+    }
+
+    private function isValidTableName(mixed $value): bool
+    {
+        return is_string($value) && preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $value) === 1;
     }
 }

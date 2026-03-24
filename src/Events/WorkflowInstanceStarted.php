@@ -11,9 +11,10 @@ class WorkflowInstanceStarted extends WorkflowEvent
         public readonly string $workflowName,
         public readonly string $state,
         ?array $subject = null,
-        ?string $tenantId = null
+        ?string $tenantId = null,
+        ?string $outboxTable = null
     ) {
-        parent::__construct('instance_started', $subject, $tenantId);
+        parent::__construct('instance_started', $subject, $tenantId, $outboxTable);
     }
 
     /**

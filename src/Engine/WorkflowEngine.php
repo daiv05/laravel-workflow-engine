@@ -496,6 +496,13 @@ class WorkflowEngine implements WorkflowEngineInterface
      */
     private function emitWorkflowInstanceStarted(array $instance, string $workflowName): void
     {
+        $definitionId = isset($instance['workflow_definition_id']) ? (int) $instance['workflow_definition_id'] : 0;
+        $definition = $definitionId > 0 ? $this->getDefinitionByIdCached($definitionId) : [];
+        $outboxTable = null;
+        if (isset($definition['storage']) && is_array($definition['storage']) && isset($definition['storage']['outbox_table']) && is_string($definition['storage']['outbox_table']) && $definition['storage']['outbox_table'] !== '') {
+            $outboxTable = $definition['storage']['outbox_table'];
+        }
+
         $subject = null;
         if (isset($instance['subject_type']) && isset($instance['subject_id'])) {
             $subject = [
@@ -509,7 +516,8 @@ class WorkflowEngine implements WorkflowEngineInterface
             $workflowName,
             (string) $instance['state'],
             $subject,
-            isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null
+            isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null,
+            $outboxTable
         ));
         $this->events->flushAfterCommit();
     }

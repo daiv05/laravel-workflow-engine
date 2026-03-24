@@ -27,7 +27,14 @@ class Dispatcher implements EventDispatcherInterface
     {
         $name = $event->fullEventName($this->prefix);
         $payload = $event->toPayload();
-        $outboxId = $this->outboxStore?->store($name, $payload) ?? '';
+        $outboxPayload = $payload;
+
+        $outboxTable = $event->outboxTable();
+        if (is_string($outboxTable) && $outboxTable !== '') {
+            $outboxPayload['__outbox_table'] = $outboxTable;
+        }
+
+        $outboxId = $this->outboxStore?->store($name, $outboxPayload) ?? '';
 
         $this->queued[] = [
             'event' => $event,

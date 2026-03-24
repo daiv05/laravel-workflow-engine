@@ -18,9 +18,10 @@ class StateUpdated extends WorkflowEvent
         public readonly array $context,
         public readonly array $summary,
         ?array $subject = null,
-        ?string $tenantId = null
+        ?string $tenantId = null,
+        ?string $outboxTable = null
     ) {
-        parent::__construct('updated', $subject, $tenantId);
+        parent::__construct('updated', $subject, $tenantId, $outboxTable);
     }
 
     /**

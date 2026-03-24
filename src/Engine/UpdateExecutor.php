@@ -75,11 +75,12 @@ class UpdateExecutor
     public function executeWithListeners(array $instance, array $definition, array $context, array $listeners = []): array
     {
         $state = (string) $instance['state'];
+        $outboxTable = $this->outboxTableFromDefinition($definition);
         $emittedEvents = [];
 
         try {
             /** @var array<string, mixed> $updated */
-            $updated = $this->storage->transaction(function () use ($instance, $definition, $context, $state, &$emittedEvents): array {
+            $updated = $this->storage->transaction(function () use ($instance, $definition, $context, $state, $outboxTable, &$emittedEvents): array {
                 $stateConfig = $this->stateConfig($definition, $state);
 
                 if ($stateConfig === [] || !$this->policy->canUpdateState($stateConfig, $context)) {
@@ -165,7 +166,8 @@ class UpdateExecutor
                         'version' => (int) ($updated['version'] ?? 0),
                     ],
                     $this->subjectFromInstance($instance),
-                    isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null
+                    isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null,
+                    $outboxTable
                 );
 
                 $this->events->queue($event);
@@ -193,7 +195,8 @@ class UpdateExecutor
                 'update',
                 $this->normalizeException($exception),
                 $this->subjectFromInstance($instance),
-                isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null
+                isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null,
+                $outboxTable
             ));
             $this->events->flushAfterCommit();
 
@@ -324,5 +327,20 @@ class UpdateExecutor
             'subject_type' => (string) $instance['subject_type'],
             'subject_id' => (string) $instance['subject_id'],
         ];
+    }
+
+    private function outboxTableFromDefinition(array $definition): ?string
+    {
+        if (!isset($definition['storage']) || !is_array($definition['storage'])) {
+            return null;
+        }
+
+        $outboxTable = $definition['storage']['outbox_table'] ?? null;
+
+        if (!is_string($outboxTable) || $outboxTable === '') {
+            return null;
+        }
+
+        return $outboxTable;
     }
 }

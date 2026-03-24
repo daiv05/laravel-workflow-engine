@@ -38,6 +38,22 @@ return new class extends Migration {
             $table->index(['workflow_definition_id'], 'wf_instance_definition_idx');
         });
 
+        Schema::create('workflow_instance_locator', function (Blueprint $table): void {
+            $table->uuid('instance_id')->primary();
+            $table->unsignedBigInteger('workflow_definition_id');
+            $table->string('instances_table');
+            $table->string('histories_table');
+            $table->string('tenant_id')->nullable();
+            $table->string('state');
+            $table->string('subject_type')->nullable();
+            $table->string('subject_id')->nullable();
+            $table->timestamps();
+
+            $table->index(['workflow_definition_id'], 'wf_locator_definition_idx');
+            $table->index(['tenant_id', 'subject_type', 'subject_id'], 'wf_locator_subject_lookup_idx');
+            $table->index(['workflow_definition_id', 'subject_type', 'subject_id'], 'wf_locator_definition_subject_idx');
+        });
+
         Schema::create('workflow_histories', function (Blueprint $table): void {
             $table->id();
             $table->uuid('instance_id');
@@ -66,12 +82,19 @@ return new class extends Migration {
 
             $table->index(['status', 'attempts', 'created_at'], 'wf_outbox_status_attempts_created_idx');
         });
+
+        Schema::create('workflow_outbox_tables', function (Blueprint $table): void {
+            $table->string('table_name')->primary();
+            $table->timestamp('registered_at')->nullable();
+        });
     }
 
     public function down(): void
     {
+        Schema::dropIfExists('workflow_outbox_tables');
         Schema::dropIfExists('workflow_outbox');
         Schema::dropIfExists('workflow_histories');
+        Schema::dropIfExists('workflow_instance_locator');
         Schema::dropIfExists('workflow_instances');
         Schema::dropIfExists('workflow_definitions');
     }

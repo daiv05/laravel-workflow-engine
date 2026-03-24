@@ -7,14 +7,24 @@ The package currently supports:
 - In-memory repository for fast local execution and tests.
 - Database repository using Laravel connection/query builder.
 
+Database mode supports per-definition runtime table routing through DSL `storage.binding` resolved from configuration.
+
 ## Core Tables
 
 - workflow_definitions
+- workflow_instance_locator
 - workflow_instances
 - workflow_histories
 - workflow_outbox
+- workflow_outbox_tables
 
-Note: outbox persistence is active when storage driver is `database` and outbox support is enabled in configuration.
+Notes:
+
+- `workflow_definitions` remains the global catalog of active/versioned definitions.
+- `workflow_instance_locator` is the global lookup table for `instance_id -> runtime tables`.
+- Runtime instances/histories/outbox can be redirected per definition using `storage.binding`.
+- Outbox persistence is active when storage driver is `database` and outbox support is enabled in configuration.
+- `workflow_outbox_tables` tracks all registered outbox tables so the processor can fetch pending records across tables.
 
 ## workflow_definitions
 
@@ -38,6 +48,10 @@ Constraints:
 
 ## workflow_instances
 
+`workflow_instances` is the default runtime instances table when no per-definition binding override is provided.
+
+When a definition declares `storage.binding`, the resolved `instances_table` for that binding becomes the runtime instances table for instances created under that definition.
+
 Main fields:
 
 - instance_id (UUID primary key)
@@ -55,6 +69,27 @@ Optional subject association fields:
 - subject_id (nullable)
 
 ## workflow_histories
+
+`workflow_histories` is the default runtime history table when no per-definition binding override is provided.
+
+When a definition declares `storage.binding`, history rows for instances of that definition are stored in the resolved `histories_table`.
+
+## workflow_instance_locator
+
+Global routing table used by repository runtime operations.
+
+Main fields:
+
+- instance_id
+- workflow_definition_id
+- instances_table
+- histories_table
+- tenant_id
+- state
+- subject_type
+- subject_id
+- created_at
+- updated_at
 
 Main fields:
 
@@ -80,7 +115,42 @@ Transition execution is atomic:
 
 Event flush occurs only after successful transaction completion.
 
+## Storage Bindings Configuration
+
+Bindings are configured in `config/workflow.php` under `storage.bindings`.
+
+Each binding supports:
+
+- instances_table
+- histories_table
+- outbox_table (optional)
+
+Example:
+
+```php
+'storage' => [
+	'default_binding' => 'default',
+	'bindings' => [
+		'default' => [
+			'instances_table' => 'workflow_instances',
+			'histories_table' => 'workflow_histories',
+			'outbox_table' => 'workflow_outbox',
+		],
+		'termination_request' => [
+			'instances_table' => 'wf_termination_instances',
+			'histories_table' => 'wf_termination_histories',
+			'outbox_table' => 'wf_termination_outbox',
+		],
+	],
+],
+```
+
 ## Outbox Operational Support
+
+Outbox can be routed per definition with `storage.binding`.
+
+- If binding provides `outbox_table`, events emitted for instances of that definition are stored in that table.
+- If binding omits `outbox_table`, events are stored in the configured global outbox table.
 
 Outbox records use these lifecycle states:
 

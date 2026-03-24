@@ -19,9 +19,10 @@ class TransitionExecuted extends WorkflowEvent
         public readonly array $context,
         public readonly mixed $meta = null,
         ?array $subject = null,
-        ?string $tenantId = null
+        ?string $tenantId = null,
+        ?string $outboxTable = null
     ) {
-        parent::__construct($eventName, $subject, $tenantId);
+        parent::__construct($eventName, $subject, $tenantId, $outboxTable);
     }
 
     /**

@@ -4,17 +4,35 @@ declare(strict_types=1);
 
 namespace Daiv05\LaravelWorkflowEngine\Storage;
 
+use Daiv05\LaravelWorkflowEngine\Contracts\StorageBindingResolverInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\StorageRepositoryInterface;
 use Daiv05\LaravelWorkflowEngine\Exceptions\OptimisticLockException;
 use Daiv05\LaravelWorkflowEngine\Exceptions\WorkflowException;
 use DateTimeImmutable;
 use Illuminate\Database\ConnectionInterface;
+use Illuminate\Database\Schema\Builder as SchemaBuilder;
+use Illuminate\Database\Schema\Blueprint;
 
 class DatabaseWorkflowRepository implements StorageRepositoryInterface
 {
-    public function __construct(private readonly ConnectionInterface $connection)
-    {
+    public function __construct(
+        private readonly ConnectionInterface $connection,
+        private readonly string $definitionsTable = 'workflow_definitions',
+        private readonly string $instanceLocatorTable = 'workflow_instance_locator',
+        private readonly string $defaultInstancesTable = 'workflow_instances',
+        private readonly string $defaultHistoriesTable = 'workflow_histories',
+        ?StorageBindingResolverInterface $storageBindingResolver = null
+    ) {
+        $this->storageBindingResolver = $storageBindingResolver ?? new ConfigStorageBindingResolver(
+            [],
+            'default',
+            $this->defaultInstancesTable,
+            $this->defaultHistoriesTable,
+            null
+        );
     }
+
+    private readonly StorageBindingResolverInterface $storageBindingResolver;
 
     public function transaction(callable $callback): mixed
     {
@@ -25,8 +43,14 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
     {
         return (int) $this->connection->transaction(function () use ($workflowName, $definition, $tenantId): int {
             $version = (int) ($definition['version'] ?? 0);
+            $storage = $this->definitionStorage($definition);
+            $definitionSnapshot = $definition;
+            $definitionSnapshot['storage'] = $storage;
 
-            $existingVersionQuery = $this->connection->table('workflow_definitions')
+            $this->ensureLocatorTable();
+            $this->ensureRuntimeTables($storage['instances_table'], $storage['histories_table']);
+
+            $existingVersionQuery = $this->connection->table($this->definitionsTable)
                 ->where('workflow_name', $workflowName)
                 ->where('version', $version);
 
@@ -42,7 +66,7 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
 
             $activeScope = $this->activeScope($workflowName, $tenantId);
 
-            $deactivate = $this->connection->table('workflow_definitions')
+            $deactivate = $this->connection->table($this->definitionsTable)
                 ->where('workflow_name', $workflowName)
                 ->where('is_active', true);
 
@@ -60,12 +84,12 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
                 'updated_at' => $timestamp,
             ]);
 
-            return (int) $this->connection->table('workflow_definitions')->insertGetId([
+            return (int) $this->connection->table($this->definitionsTable)->insertGetId([
                 'workflow_name' => $workflowName,
                 'version' => $version,
                 'tenant_id' => $tenantId,
-                'dsl_version' => (int) $definition['dsl_version'],
-                'definition' => json_encode($definition, JSON_THROW_ON_ERROR),
+                'dsl_version' => (int) $definitionSnapshot['dsl_version'],
+                'definition' => json_encode($definitionSnapshot, JSON_THROW_ON_ERROR),
                 'is_active' => true,
                 'active_scope' => $activeScope,
                 'created_at' => $timestamp,
@@ -76,7 +100,7 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
 
     public function getActiveDefinition(string $workflowName, ?string $tenantId = null): array
     {
-        $query = $this->connection->table('workflow_definitions')
+        $query = $this->connection->table($this->definitionsTable)
             ->where('workflow_name', $workflowName)
             ->where('is_active', true);
 
@@ -97,7 +121,7 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
 
     public function getDefinitionById(int $definitionId): array
     {
-        $row = $this->connection->table('workflow_definitions')
+        $row = $this->connection->table($this->definitionsTable)
             ->where('id', $definitionId)
             ->first();
 
@@ -111,14 +135,32 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
     public function createInstance(array $instance): array
     {
         $timestamp = (new DateTimeImmutable())->format(DATE_ATOM);
+        $definitionId = (int) $instance['workflow_definition_id'];
+        $storage = $this->definitionStorage($this->getDefinitionById($definitionId));
 
-        $this->connection->table('workflow_instances')->insert([
+        $this->ensureLocatorTable();
+        $this->ensureRuntimeTables($storage['instances_table'], $storage['histories_table']);
+
+        $this->connection->table($storage['instances_table'])->insert([
             'instance_id' => (string) $instance['instance_id'],
-            'workflow_definition_id' => (int) $instance['workflow_definition_id'],
+            'workflow_definition_id' => $definitionId,
             'tenant_id' => $instance['tenant_id'] ?? null,
             'state' => (string) $instance['state'],
             'data' => json_encode($instance['data'] ?? [], JSON_THROW_ON_ERROR),
             'version' => (int) ($instance['version'] ?? 0),
+            'subject_type' => $instance['subject_type'] ?? null,
+            'subject_id' => $instance['subject_id'] ?? null,
+            'created_at' => $instance['created_at'] ?? $timestamp,
+            'updated_at' => $instance['updated_at'] ?? $timestamp,
+        ]);
+
+        $this->connection->table($this->instanceLocatorTable)->insert([
+            'instance_id' => (string) $instance['instance_id'],
+            'workflow_definition_id' => $definitionId,
+            'instances_table' => $storage['instances_table'],
+            'histories_table' => $storage['histories_table'],
+            'tenant_id' => $instance['tenant_id'] ?? null,
+            'state' => (string) $instance['state'],
             'subject_type' => $instance['subject_type'] ?? null,
             'subject_id' => $instance['subject_id'] ?? null,
             'created_at' => $instance['created_at'] ?? $timestamp,
@@ -130,7 +172,9 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
 
     public function getInstance(string $instanceId): array
     {
-        $row = $this->connection->table('workflow_instances')
+        $locator = $this->instanceLocator($instanceId);
+
+        $row = $this->connection->table((string) $locator['instances_table'])
             ->where('instance_id', $instanceId)
             ->first();
 
@@ -144,8 +188,10 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
     public function updateInstanceWithVersionCheck(array $instance, int $expectedVersion): array
     {
         $timestamp = (new DateTimeImmutable())->format(DATE_ATOM);
+        $locator = $this->instanceLocator((string) $instance['instance_id']);
+        $instancesTable = (string) $locator['instances_table'];
 
-        $affected = $this->connection->table('workflow_instances')
+        $affected = $this->connection->table($instancesTable)
             ->where('instance_id', (string) $instance['instance_id'])
             ->where('version', $expectedVersion)
             ->update([
@@ -159,19 +205,28 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
             throw OptimisticLockException::forInstance((string) $instance['instance_id'], $expectedVersion);
         }
 
+        $this->connection->table($this->instanceLocatorTable)
+            ->where('instance_id', (string) $instance['instance_id'])
+            ->update([
+                'state' => (string) $instance['state'],
+                'updated_at' => $instance['updated_at'] ?? $timestamp,
+            ]);
+
         return $this->getInstance((string) $instance['instance_id']);
     }
 
     public function appendHistory(array $history): void
     {
         $timestamp = (new DateTimeImmutable())->format(DATE_ATOM);
+        $locator = $this->instanceLocator((string) $history['instance_id']);
+        $historiesTable = (string) $locator['histories_table'];
         $payload = $history['payload'] ?? $history;
 
         if (!is_array($payload)) {
             $payload = ['value' => $payload];
         }
 
-        $this->connection->table('workflow_histories')->insert([
+        $this->connection->table($historiesTable)->insert([
             'instance_id' => (string) $history['instance_id'],
             'transition_id' => (string) ($history['transition_id'] ?? ''),
             'action' => (string) $history['action'],
@@ -186,7 +241,8 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
 
     public function getHistory(string $instanceId): array
     {
-        $rows = $this->connection->table('workflow_histories')
+        $locator = $this->instanceLocator($instanceId);
+        $rows = $this->connection->table((string) $locator['histories_table'])
             ->where('instance_id', $instanceId)
             ->orderBy('created_at')
             ->orderBy('id')
@@ -270,26 +326,27 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
      */
     public function getLatestInstanceForSubject(string $workflowName, array $subjectRef, ?string $tenantId = null): ?array
     {
-        $query = $this->connection->table('workflow_instances')
-            ->join('workflow_definitions', 'workflow_instances.workflow_definition_id', '=', 'workflow_definitions.id')
-            ->where('workflow_definitions.workflow_name', $workflowName)
-            ->where('workflow_instances.subject_type', $subjectRef['subject_type'] ?? null)
-            ->where('workflow_instances.subject_id', $subjectRef['subject_id'] ?? null);
+        $query = $this->connection->table($this->instanceLocatorTable)
+            ->join($this->definitionsTable, $this->instanceLocatorTable . '.workflow_definition_id', '=', $this->definitionsTable . '.id')
+            ->where($this->definitionsTable . '.workflow_name', $workflowName)
+            ->where($this->instanceLocatorTable . '.subject_type', $subjectRef['subject_type'] ?? null)
+            ->where($this->instanceLocatorTable . '.subject_id', $subjectRef['subject_id'] ?? null);
 
         if ($tenantId === null) {
-            $query->whereNull('workflow_instances.tenant_id');
+            $query->whereNull($this->instanceLocatorTable . '.tenant_id');
         } else {
-            $query->where('workflow_instances.tenant_id', $tenantId);
+            $query->where($this->instanceLocatorTable . '.tenant_id', $tenantId);
         }
 
-        $row = $query->orderByDesc('workflow_instances.created_at')
-            ->first(['workflow_instances.*']);
+        $row = $query->orderByDesc($this->instanceLocatorTable . '.created_at')
+            ->orderByDesc($this->instanceLocatorTable . '.instance_id')
+            ->first([$this->instanceLocatorTable . '.instance_id']);
 
         if ($row === null) {
             return null;
         }
 
-        return $this->hydrateInstance((array) $row);
+        return $this->getInstance((string) $row->instance_id);
     }
 
     /**
@@ -299,27 +356,27 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
      */
     public function getInstancesForSubject(array $subjectRef, ?string $tenantId = null, ?string $workflowName = null): array
     {
-        $query = $this->connection->table('workflow_instances')
-            ->where('workflow_instances.subject_type', $subjectRef['subject_type'] ?? null)
-            ->where('workflow_instances.subject_id', $subjectRef['subject_id'] ?? null);
+        $query = $this->connection->table($this->instanceLocatorTable)
+            ->where($this->instanceLocatorTable . '.subject_type', $subjectRef['subject_type'] ?? null)
+            ->where($this->instanceLocatorTable . '.subject_id', $subjectRef['subject_id'] ?? null);
 
         if ($tenantId === null) {
-            $query->whereNull('workflow_instances.tenant_id');
+            $query->whereNull($this->instanceLocatorTable . '.tenant_id');
         } else {
-            $query->where('workflow_instances.tenant_id', $tenantId);
+            $query->where($this->instanceLocatorTable . '.tenant_id', $tenantId);
         }
 
         if ($workflowName !== null) {
-            $query->join('workflow_definitions', 'workflow_instances.workflow_definition_id', '=', 'workflow_definitions.id')
-                ->where('workflow_definitions.workflow_name', $workflowName);
+            $query->join($this->definitionsTable, $this->instanceLocatorTable . '.workflow_definition_id', '=', $this->definitionsTable . '.id')
+                ->where($this->definitionsTable . '.workflow_name', $workflowName);
         }
 
-        $rows = $query->orderBy('workflow_instances.created_at')
-            ->get(['workflow_instances.*']);
+        $rows = $query->orderBy($this->instanceLocatorTable . '.created_at')
+            ->get([$this->instanceLocatorTable . '.instance_id']);
 
         $result = [];
         foreach ($rows as $row) {
-            $result[] = $this->hydrateInstance((array) $row);
+            $result[] = $this->getInstance((string) $row->instance_id);
         }
 
         return $result;
@@ -337,30 +394,136 @@ class DatabaseWorkflowRepository implements StorageRepositoryInterface
         array $finalStates,
         ?string $tenantId = null
     ): ?array {
-        $query = $this->connection->table('workflow_instances')
-            ->join('workflow_definitions', 'workflow_instances.workflow_definition_id', '=', 'workflow_definitions.id')
-            ->where('workflow_definitions.workflow_name', $workflowName)
-            ->where('workflow_instances.subject_type', $subjectRef['subject_type'] ?? null)
-            ->where('workflow_instances.subject_id', $subjectRef['subject_id'] ?? null);
+        $query = $this->connection->table($this->instanceLocatorTable)
+            ->join($this->definitionsTable, $this->instanceLocatorTable . '.workflow_definition_id', '=', $this->definitionsTable . '.id')
+            ->where($this->definitionsTable . '.workflow_name', $workflowName)
+            ->where($this->instanceLocatorTable . '.subject_type', $subjectRef['subject_type'] ?? null)
+            ->where($this->instanceLocatorTable . '.subject_id', $subjectRef['subject_id'] ?? null);
 
         if ($tenantId === null) {
-            $query->whereNull('workflow_instances.tenant_id');
+            $query->whereNull($this->instanceLocatorTable . '.tenant_id');
         } else {
-            $query->where('workflow_instances.tenant_id', $tenantId);
+            $query->where($this->instanceLocatorTable . '.tenant_id', $tenantId);
         }
 
         if ($finalStates !== []) {
-            $query->whereNotIn('workflow_instances.state', $finalStates);
+            $query->whereNotIn($this->instanceLocatorTable . '.state', $finalStates);
         }
 
-        $row = $query->orderByDesc('workflow_instances.created_at')
-            ->orderByDesc('workflow_instances.instance_id')
-            ->first(['workflow_instances.*']);
+        $row = $query->orderByDesc($this->instanceLocatorTable . '.created_at')
+            ->orderByDesc($this->instanceLocatorTable . '.instance_id')
+            ->first([$this->instanceLocatorTable . '.instance_id']);
 
         if ($row === null) {
             return null;
         }
 
-        return $this->hydrateInstance((array) $row);
+        return $this->getInstance((string) $row->instance_id);
+    }
+
+    /**
+     * @return array{instances_table: string, histories_table: string, outbox_table: string|null}
+     */
+    private function definitionStorage(array $definition): array
+    {
+        return $this->storageBindingResolver->resolveFromDefinition($definition);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function instanceLocator(string $instanceId): array
+    {
+        $this->ensureLocatorTable();
+
+        $row = $this->connection->table($this->instanceLocatorTable)
+            ->where('instance_id', $instanceId)
+            ->first();
+
+        if ($row === null) {
+            throw new WorkflowException('Workflow instance not found: ' . $instanceId);
+        }
+
+        return (array) $row;
+    }
+
+    private function ensureLocatorTable(): void
+    {
+        $schema = $this->schemaBuilder();
+
+        if ($schema->hasTable($this->instanceLocatorTable)) {
+            return;
+        }
+
+        $schema->create($this->instanceLocatorTable, function (Blueprint $table): void {
+            $table->uuid('instance_id')->primary();
+            $table->unsignedBigInteger('workflow_definition_id');
+            $table->string('instances_table');
+            $table->string('histories_table');
+            $table->string('tenant_id')->nullable();
+            $table->string('state');
+            $table->string('subject_type')->nullable();
+            $table->string('subject_id')->nullable();
+            $table->timestamps();
+
+            $table->index(['workflow_definition_id'], 'wf_locator_definition_idx');
+            $table->index(['tenant_id', 'subject_type', 'subject_id'], 'wf_locator_subject_lookup_idx');
+            $table->index(['workflow_definition_id', 'subject_type', 'subject_id'], 'wf_locator_definition_subject_idx');
+        });
+    }
+
+    private function ensureRuntimeTables(string $instancesTable, string $historiesTable): void
+    {
+        $schema = $this->schemaBuilder();
+
+        if (!$schema->hasTable($instancesTable)) {
+            $schema->create($instancesTable, function (Blueprint $table): void {
+                $table->uuid('instance_id')->primary();
+                $table->unsignedBigInteger('workflow_definition_id');
+                $table->string('tenant_id')->nullable();
+                $table->string('state');
+                $table->json('data');
+                $table->unsignedInteger('version')->default(0);
+                $table->string('subject_type')->nullable();
+                $table->string('subject_id')->nullable();
+                $table->timestamps();
+
+                $table->index(['tenant_id', 'state']);
+                $table->index(['workflow_definition_id']);
+                $table->index(['tenant_id', 'subject_type', 'subject_id']);
+                $table->index(['workflow_definition_id', 'subject_type', 'subject_id']);
+            });
+        }
+
+        if (!$schema->hasTable($historiesTable)) {
+            $schema->create($historiesTable, function (Blueprint $table): void {
+                $table->id();
+                $table->uuid('instance_id');
+                $table->string('transition_id');
+                $table->string('action');
+                $table->string('from_state');
+                $table->string('to_state');
+                $table->string('actor')->nullable();
+                $table->json('payload')->nullable();
+                $table->timestamps();
+
+                $table->index(['instance_id']);
+                $table->index(['created_at']);
+            });
+        }
+    }
+
+    private function schemaBuilder(): SchemaBuilder
+    {
+        $connection = $this->connection;
+
+        if (!method_exists($connection, 'getSchemaBuilder')) {
+            throw new WorkflowException('Database connection does not support schema operations');
+        }
+
+        /** @var SchemaBuilder $builder */
+        $builder = call_user_func([$connection, 'getSchemaBuilder']);
+
+        return $builder;
     }
 }

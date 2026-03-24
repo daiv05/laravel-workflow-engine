@@ -40,6 +40,10 @@ The implementation enforces these root keys during parse + validation:
 - `states`
 - `transitions`
 
+Optional root key:
+
+- `storage`
+
 Current type checks:
 
 - `dsl_version` must be an integer.
@@ -71,6 +75,27 @@ Optional transition sections:
 - `effects`
 - `mappings`
 - `validation`
+
+## Storage Section (Per Definition Runtime Tables)
+
+`storage` is optional at definition root and controls runtime persistence binding for that specific workflow definition.
+
+Supported keys:
+
+- `binding` (required when `storage` is present)
+
+Validation rules:
+
+- `storage` must be an object-like array.
+- `binding` must be a non-empty string.
+- `binding` must exist in `config/workflow.php` under `storage.bindings` (or match `storage.default_binding`).
+- Direct table keys in DSL (`instances_table`, `histories_table`, `outbox_table`) are not allowed.
+
+Runtime behavior:
+
+- Definitions are still activated in the global definitions catalog.
+- Binding is resolved at activation and persisted in the definition snapshot.
+- Instances, histories, and outbox routes are selected from the resolved binding tables.
 
 ## Rule DSL (`allowed_if`, `fields.visible_if`, `fields.editable_if`)
 
@@ -222,6 +247,8 @@ The current validator does not strictly enforce all potential shape/type rules. 
 dsl_version: 2
 name: termination_request
 version: 1
+storage:
+  binding: termination_request
 initial_state: draft
 final_states:
   - approved

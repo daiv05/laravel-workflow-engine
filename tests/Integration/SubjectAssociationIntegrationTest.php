@@ -74,6 +74,22 @@ class SubjectAssociationIntegrationTest extends TestCase
             $table->index(['workflow_definition_id', 'subject_type', 'subject_id'], 'wf_instance_definition_subject_idx');
         });
 
+        $schema->create('workflow_instance_locator', function (Blueprint $table): void {
+            $table->uuid('instance_id')->primary();
+            $table->unsignedBigInteger('workflow_definition_id');
+            $table->string('instances_table');
+            $table->string('histories_table');
+            $table->string('tenant_id')->nullable();
+            $table->string('state');
+            $table->string('subject_type')->nullable();
+            $table->string('subject_id')->nullable();
+            $table->timestamps();
+
+            $table->index(['workflow_definition_id'], 'wf_locator_definition_idx');
+            $table->index(['tenant_id', 'subject_type', 'subject_id'], 'wf_locator_subject_lookup_idx');
+            $table->index(['workflow_definition_id', 'subject_type', 'subject_id'], 'wf_locator_definition_subject_idx');
+        });
+
         $schema->create('workflow_histories', function (Blueprint $table): void {
             $table->id();
             $table->uuid('instance_id');
@@ -100,6 +116,11 @@ class SubjectAssociationIntegrationTest extends TestCase
             $table->timestamps();
 
             $table->index(['status', 'attempts', 'created_at'], 'wf_outbox_status_attempts_created_idx');
+        });
+
+        $schema->create('workflow_outbox_tables', function (Blueprint $table): void {
+            $table->string('table_name')->primary();
+            $table->timestamp('registered_at')->nullable();
         });
     }
 

@@ -11,6 +11,7 @@ use Daiv05\LaravelWorkflowEngine\Contracts\FunctionRegistryInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\OutboxStoreInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\RuleEngineInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\StorageRepositoryInterface;
+use Daiv05\LaravelWorkflowEngine\Contracts\StorageBindingResolverInterface;
 use Daiv05\LaravelWorkflowEngine\DSL\Compiler;
 use Daiv05\LaravelWorkflowEngine\DSL\Parser;
 use Daiv05\LaravelWorkflowEngine\DSL\Validator;
@@ -29,6 +30,7 @@ use Daiv05\LaravelWorkflowEngine\Outbox\OutboxProcessor;
 use Daiv05\LaravelWorkflowEngine\Rules\RuleEngine;
 use Daiv05\LaravelWorkflowEngine\Storage\DatabaseOutboxStore;
 use Daiv05\LaravelWorkflowEngine\Storage\DatabaseWorkflowRepository;
+use Daiv05\LaravelWorkflowEngine\Storage\ConfigStorageBindingResolver;
 use Daiv05\LaravelWorkflowEngine\Storage\InMemoryWorkflowRepository;
 use Daiv05\LaravelWorkflowEngine\Storage\NullOutboxStore;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
@@ -48,7 +50,18 @@ class WorkflowServiceProvider extends ServiceProvider
         $this->app->singleton(Parser::class, static fn () => new Parser());
         $this->app->singleton(Compiler::class, static fn () => new Compiler());
 
-        $this->app->singleton(Validator::class, fn ($app) => new Validator($app->make(FunctionRegistryInterface::class)));
+        $this->app->singleton(StorageBindingResolverInterface::class, fn ($app) => new ConfigStorageBindingResolver(
+            (array) $app['config']->get('workflow.storage.bindings', []),
+            (string) $app['config']->get('workflow.storage.default_binding', 'default'),
+            (string) $app['config']->get('workflow.storage.instances_table', 'workflow_instances'),
+            (string) $app['config']->get('workflow.storage.histories_table', 'workflow_histories'),
+            (string) $app['config']->get('workflow.outbox.table', 'workflow_outbox')
+        ));
+
+        $this->app->singleton(Validator::class, fn ($app) => new Validator(
+            $app->make(FunctionRegistryInterface::class),
+            $app->make(StorageBindingResolverInterface::class)
+        ));
 
         $this->app->singleton(RuleEngine::class, fn ($app) => new RuleEngine($app->make(FunctionRegistryInterface::class)));
         $this->app->alias(RuleEngine::class, RuleEngineInterface::class);
@@ -66,7 +79,8 @@ class WorkflowServiceProvider extends ServiceProvider
 
         $this->app->singleton(DatabaseOutboxStore::class, fn ($app) => new DatabaseOutboxStore(
             $app->make(ConnectionInterface::class),
-            (string) $app['config']->get('workflow.outbox.table', 'workflow_outbox')
+            (string) $app['config']->get('workflow.outbox.table', 'workflow_outbox'),
+            (string) $app['config']->get('workflow.outbox.tables_registry_table', 'workflow_outbox_tables')
         ));
         $this->app->singleton(NullOutboxStore::class, static fn () => new NullOutboxStore());
 
@@ -112,7 +126,12 @@ class WorkflowServiceProvider extends ServiceProvider
 
         $this->app->singleton(InMemoryWorkflowRepository::class, static fn () => new InMemoryWorkflowRepository());
         $this->app->singleton(DatabaseWorkflowRepository::class, fn ($app) => new DatabaseWorkflowRepository(
-            $app->make(ConnectionInterface::class)
+            $app->make(ConnectionInterface::class),
+            (string) $app['config']->get('workflow.storage.definitions_table', 'workflow_definitions'),
+            (string) $app['config']->get('workflow.storage.instance_locator_table', 'workflow_instance_locator'),
+            (string) $app['config']->get('workflow.storage.instances_table', 'workflow_instances'),
+            (string) $app['config']->get('workflow.storage.histories_table', 'workflow_histories'),
+            $app->make(StorageBindingResolverInterface::class)
         ));
 
         $this->app->singleton(StorageRepositoryInterface::class, fn ($app) => match ((string) $app['config']->get('workflow.default_driver', 'memory')) {

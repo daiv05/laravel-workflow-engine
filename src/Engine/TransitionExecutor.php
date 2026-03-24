@@ -60,11 +60,12 @@ class TransitionExecutor
     ): array
     {
         $workflowName = $this->workflowName($definition);
+        $outboxTable = $this->outboxTableFromDefinition($definition);
         $emittedEvents = [];
 
         try {
             /** @var array<string, mixed> $updated */
-            $updated = $this->storage->transaction(function () use ($instance, $definition, $action, $context, &$emittedEvents): array {
+            $updated = $this->storage->transaction(function () use ($instance, $definition, $action, $context, $outboxTable, &$emittedEvents): array {
                 $transition = $this->stateMachine->transitionFor($definition, (string) $instance['state'], $action);
                 $mappingSummary = [];
 
@@ -136,7 +137,8 @@ class TransitionExecutor
                             $context,
                             array_key_exists('meta', $effect) ? $effect['meta'] : null,
                             $subject,
-                            isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null
+                            isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null,
+                            $outboxTable
                         );
 
                         $this->events->queue($transitionEvent);
@@ -175,7 +177,8 @@ class TransitionExecutor
                 $action,
                 $this->normalizeException($exception),
                 $subject,
-                isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null
+                isset($instance['tenant_id']) ? (string) $instance['tenant_id'] : null,
+                $outboxTable
             ));
             $this->events->flushAfterCommit();
 
@@ -388,5 +391,20 @@ class TransitionExecutor
         }
 
         return $summary;
+    }
+
+    private function outboxTableFromDefinition(array $definition): ?string
+    {
+        if (!isset($definition['storage']) || !is_array($definition['storage'])) {
+            return null;
+        }
+
+        $outboxTable = $definition['storage']['outbox_table'] ?? null;
+
+        if (!is_string($outboxTable) || $outboxTable === '') {
+            return null;
+        }
+
+        return $outboxTable;
     }
 }

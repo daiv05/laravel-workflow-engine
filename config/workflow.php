@@ -9,8 +9,17 @@ return [
 
     'storage' => [
         'definitions_table' => 'workflow_definitions',
+        'instance_locator_table' => 'workflow_instance_locator',
         'instances_table' => 'workflow_instances',
         'histories_table' => 'workflow_histories',
+        'default_binding' => 'default',
+        'bindings' => [
+            'default' => [
+                'instances_table' => 'workflow_instances',
+                'histories_table' => 'workflow_histories',
+                'outbox_table' => 'workflow_outbox',
+            ],
+        ],
     ],
 
     'cache' => [
@@ -21,6 +30,7 @@ return [
     'outbox' => [
         'enabled' => true,
         'table' => 'workflow_outbox',
+        'tables_registry_table' => 'workflow_outbox_tables',
         'dispatch_batch' => 50,
         'max_attempts' => 5,
     ],
