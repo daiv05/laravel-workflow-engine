@@ -8,6 +8,8 @@ use Daiv05\LaravelWorkflowEngine\Contracts\EventDispatcherInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\FunctionRegistryInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\OutboxStoreInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\StorageRepositoryInterface;
+use Daiv05\LaravelWorkflowEngine\Contracts\WorkflowEngineInterface;
+use Daiv05\LaravelWorkflowEngine\Contracts\WorkflowManagerInterface;
 use Daiv05\LaravelWorkflowEngine\Engine\WorkflowEngine;
 use Daiv05\LaravelWorkflowEngine\Events\Dispatcher;
 use Daiv05\LaravelWorkflowEngine\Events\WorkflowInstanceStarted;
@@ -43,6 +45,8 @@ class WorkflowServiceProviderTest extends TestCase
 
         $this->assertInstanceOf(FunctionRegistryInterface::class, $this->app->make(FunctionRegistryInterface::class));
         $this->assertInstanceOf(StorageRepositoryInterface::class, $this->app->make(StorageRepositoryInterface::class));
+        $this->assertInstanceOf(WorkflowEngineInterface::class, $this->app->make(WorkflowEngineInterface::class));
+        $this->assertInstanceOf(WorkflowManagerInterface::class, $this->app->make(WorkflowManagerInterface::class));
         $this->assertInstanceOf(InMemoryWorkflowRepository::class, $this->app->make(StorageRepositoryInterface::class));
         $this->assertInstanceOf(OutboxStoreInterface::class, $this->app->make(OutboxStoreInterface::class));
         $this->assertInstanceOf(NullOutboxStore::class, $this->app->make(OutboxStoreInterface::class));

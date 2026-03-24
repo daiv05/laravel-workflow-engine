@@ -6,6 +6,8 @@ namespace Daiv05\LaravelWorkflowEngine\Contracts;
 
 interface WorkflowEngineInterface
 {
+    public function execution(?string $instanceId = null): ExecutionBuilderInterface;
+
     /**
      * @param array<string, mixed> $options
      *

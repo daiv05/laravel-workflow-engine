@@ -5,9 +5,11 @@ declare(strict_types=1);
 namespace Daiv05\LaravelWorkflowEngine\Engine;
 
 use Daiv05\LaravelWorkflowEngine\Contracts\DataMapperInterface;
+use Daiv05\LaravelWorkflowEngine\Contracts\ExecutionBuilderInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\EventDispatcherInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\StorageRepositoryInterface;
 use Daiv05\LaravelWorkflowEngine\Contracts\WorkflowEngineInterface;
+use Daiv05\LaravelWorkflowEngine\Contracts\WorkflowManagerInterface;
 use Daiv05\LaravelWorkflowEngine\DSL\Compiler;
 use Daiv05\LaravelWorkflowEngine\DSL\Parser;
 use Daiv05\LaravelWorkflowEngine\DSL\Validator;
@@ -19,7 +21,7 @@ use Daiv05\LaravelWorkflowEngine\Events\WorkflowInstanceStarted;
 use Daiv05\LaravelWorkflowEngine\Policies\PolicyEngine;
 use Illuminate\Contracts\Cache\Repository as CacheRepository;
 
-class WorkflowEngine implements WorkflowEngineInterface
+class WorkflowEngine implements WorkflowEngineInterface, WorkflowManagerInterface
 {
     /** @var array<string, array<string, mixed>> */
     private array $activeDefinitionCache = [];
@@ -157,7 +159,7 @@ class WorkflowEngine implements WorkflowEngineInterface
         return $this->executor->executeWithListeners($instance, $definition, $action, $context, $listeners);
     }
 
-    public function execution(?string $instanceId = null): ExecutionBuilder
+    public function execution(?string $instanceId = null): ExecutionBuilderInterface
     {
         return new ExecutionBuilder($this, $instanceId);
     }

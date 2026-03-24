@@ -35,6 +35,24 @@ Execution-scoped composition operations:
 
 These operations are designed to support immutable definition versioning, UUID instance identity, and after-commit event semantics.
 
+## Container Contracts
+
+The package exposes engine services through explicit container contracts:
+
+- `WorkflowEngineInterface`: runtime workflow operations (`start`, `can`, `execute`, `update`, inspection/query operations, and `execution()` builder access).
+- `WorkflowManagerInterface`: administrative operations (`activateDefinition`, `registerFunction`).
+
+Both contracts resolve to the package engine service in the Laravel container.
+
+## Advanced Engine APIs
+
+The following methods are public for advanced composition scenarios:
+
+- `executeWithListeners`
+- `updateWithListeners`
+
+Typical application code should prefer the execution builder (`execution()`) when execution-scoped listeners or hooks are needed.
+
 ## start
 
 Creates a new workflow instance linked to the currently active definition for a workflow and tenant.

@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace Daiv05\LaravelWorkflowEngine\Engine;
 
+use Daiv05\LaravelWorkflowEngine\Contracts\ExecutionBuilderInterface;
 use Daiv05\LaravelWorkflowEngine\Exceptions\WorkflowException;
 
-class ExecutionBuilder
+class ExecutionBuilder implements ExecutionBuilderInterface
 {
     /** @var array<string, array<int, callable>> */
     private array $listeners = [];
