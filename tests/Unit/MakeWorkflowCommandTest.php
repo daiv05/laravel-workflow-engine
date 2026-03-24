@@ -35,7 +35,7 @@ class MakeWorkflowCommandTest extends TestCase
 
     public function test_generates_yaml_stub_by_default(): void
     {
-        $output = $this->run(['name' => 'OrderApproval']);
+        $output = $this->runCommand(['name' => 'OrderApproval']);
 
         $file = $this->tempDir . '/workflows/OrderApproval.yaml';
 
@@ -47,7 +47,7 @@ class MakeWorkflowCommandTest extends TestCase
 
     public function test_yaml_stub_contains_correct_name_and_binding(): void
     {
-        $this->run(['name' => 'OrderApproval']);
+        $this->runCommand(['name' => 'OrderApproval']);
 
         $content = file_get_contents($this->tempDir . '/workflows/OrderApproval.yaml');
 
@@ -64,7 +64,7 @@ class MakeWorkflowCommandTest extends TestCase
 
     public function test_generates_json_stub_with_format_option(): void
     {
-        $this->run(['name' => 'OrderApproval', '--format' => 'json']);
+        $this->runCommand(['name' => 'OrderApproval', '--format' => 'json']);
 
         $file = $this->tempDir . '/workflows/OrderApproval.json';
 
@@ -85,7 +85,7 @@ class MakeWorkflowCommandTest extends TestCase
 
     public function test_generates_php_stub_with_format_option(): void
     {
-        $this->run(['name' => 'OrderApproval', '--format' => 'php']);
+        $this->runCommand(['name' => 'OrderApproval', '--format' => 'php']);
 
         $file = $this->tempDir . '/workflows/OrderApproval.php';
 
@@ -107,7 +107,7 @@ class MakeWorkflowCommandTest extends TestCase
 
     public function test_accepts_snake_case_name(): void
     {
-        $this->run(['name' => 'order_approval']);
+        $this->runCommand(['name' => 'order_approval']);
 
         $file = $this->tempDir . '/workflows/OrderApproval.yaml';
 
@@ -121,7 +121,7 @@ class MakeWorkflowCommandTest extends TestCase
 
     public function test_no_migration_generated_without_flag(): void
     {
-        $this->run(['name' => 'OrderApproval']);
+        $this->runCommand(['name' => 'OrderApproval']);
 
         $files = glob($this->tempDir . '/database/migrations/*.php');
 
@@ -130,7 +130,7 @@ class MakeWorkflowCommandTest extends TestCase
 
     public function test_generates_migration_with_flag(): void
     {
-        $this->run(['name' => 'OrderApproval', '--with-migrations' => true]);
+        $this->runCommand(['name' => 'OrderApproval', '--with-migrations' => true]);
 
         $files = glob($this->tempDir . '/database/migrations/*.php');
 
@@ -140,7 +140,7 @@ class MakeWorkflowCommandTest extends TestCase
 
     public function test_migration_contains_all_three_tables(): void
     {
-        $this->run(['name' => 'OrderApproval', '--with-migrations' => true]);
+        $this->runCommand(['name' => 'OrderApproval', '--with-migrations' => true]);
 
         $files   = glob($this->tempDir . '/database/migrations/*.php');
         $content = file_get_contents($files[0]);
@@ -152,7 +152,7 @@ class MakeWorkflowCommandTest extends TestCase
 
     public function test_migration_down_drops_all_three_tables(): void
     {
-        $this->run(['name' => 'OrderApproval', '--with-migrations' => true]);
+        $this->runCommand(['name' => 'OrderApproval', '--with-migrations' => true]);
 
         $files   = glob($this->tempDir . '/database/migrations/*.php');
         $content = file_get_contents($files[0]);
@@ -168,7 +168,7 @@ class MakeWorkflowCommandTest extends TestCase
 
     public function test_always_prints_config_hint(): void
     {
-        $output = $this->run(['name' => 'OrderApproval']);
+        $output = $this->runCommand(['name' => 'OrderApproval']);
 
         $this->assertStringContainsString("'order_approval'",                          $output);
         $this->assertStringContainsString("'instances_table'",                         $output);
@@ -206,31 +206,81 @@ class MakeWorkflowCommandTest extends TestCase
     // Helpers
     // -------------------------------------------------------------------------
 
-    private function run(array $args): string
+    private function runCommand(array $args): string
     {
-        $output = new BufferedOutput();
-        $this->runRaw($args, $output);
+        $command = $this->buildCommand($args);
+        $command->handle();
 
-        return $output->fetch();
+        return $command->getOutputBuffer();
     }
 
-    private function runRaw(array $args, ?BufferedOutput $output = null): int
+    private function runRaw(array $args): int
     {
-        $output ??= new BufferedOutput();
+        $command = $this->buildCommand($args);
 
-        $command = $this->buildCommand();
-        $input   = new ArrayInput(array_merge(['command' => 'workflow:make'], $args));
-        $input->setInteractive(false);
-
-        return $command->run($input, $output);
+        return $command->handle();
     }
 
-    private function buildCommand(): MakeWorkflowCommand
+    private function buildCommand(array $args = []): MakeWorkflowCommand
     {
-        $command = new class ($this->tempDir) extends MakeWorkflowCommand {
-            public function __construct(private readonly string $base)
+        return new class ($this->tempDir, $args) extends MakeWorkflowCommand {
+            private string $outputBuffer = '';
+
+            public function __construct(private readonly string $base, private readonly array $args)
             {
                 parent::__construct();
+            }
+
+            public function getOutputBuffer(): string
+            {
+                return $this->outputBuffer;
+            }
+
+            public function argument($key = null)
+            {
+                if ($key === null) {
+                    return $this->args; // Simplify
+                }
+
+                return $this->args[$key] ?? null;
+            }
+
+            public function option($key = null)
+            {
+                if ($key === null) {
+                    return [];
+                }
+
+                // If explicitly passed
+                if (array_key_exists('--' . $key, $this->args)) {
+                    return $this->args['--' . $key];
+                }
+
+                // Fallbacks from signature defaults
+                if ($key === 'format') {
+                    return 'yaml';
+                }
+
+                if ($key === 'with-migrations') {
+                    return false;
+                }
+
+                return null;
+            }
+
+            public function line($string, $style = null, $verbosity = null)
+            {
+                $this->outputBuffer .= strip_tags((string) $string) . "\n";
+            }
+
+            public function error($string, $verbosity = null)
+            {
+                $this->outputBuffer .= strip_tags((string) $string) . "\n";
+            }
+
+            public function newLine($count = 1)
+            {
+                $this->outputBuffer .= str_repeat("\n", $count);
             }
 
             protected function workflowsPath(): string
@@ -243,12 +293,6 @@ class MakeWorkflowCommandTest extends TestCase
                 return $this->base . DIRECTORY_SEPARATOR . 'database' . DIRECTORY_SEPARATOR . 'migrations';
             }
         };
-
-        $app = new Application();
-        $app->add($command);
-        $app->setAutoExit(false);
-
-        return $command;
     }
 
     private function removeDir(string $dir): void

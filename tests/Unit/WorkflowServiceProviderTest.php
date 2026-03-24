@@ -183,6 +183,11 @@ class TestApplication extends Container
     {
     }
 
+    public function runningInConsole(): bool
+    {
+        return true;
+    }
+
     public function basePath(string $path = ''): string
     {
         return $path === '' ? $this->basePath : $this->basePath . '/' . $path;

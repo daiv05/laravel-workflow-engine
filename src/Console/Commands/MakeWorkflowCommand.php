@@ -52,10 +52,6 @@ class MakeWorkflowCommand extends Command
         return self::SUCCESS;
     }
 
-    // -------------------------------------------------------------------------
-    // Stub generation
-    // -------------------------------------------------------------------------
-
     private function generateStub(string $stubName, string $bindingKey, string $format): void
     {
         $workflowsDir = $this->workflowsPath();
@@ -158,10 +154,6 @@ class MakeWorkflowCommand extends Command
         ];
     }
 
-    // -------------------------------------------------------------------------
-    // Migration generation
-    // -------------------------------------------------------------------------
-
     private function generateMigration(string $bindingKey): void
     {
         $migrationsDir = $this->migrationsPath();
@@ -258,10 +250,6 @@ class MakeWorkflowCommand extends Command
         PHP;
     }
 
-    // -------------------------------------------------------------------------
-    // Config hint
-    // -------------------------------------------------------------------------
-
     private function printConfigHint(string $bindingKey): void
     {
         $instancesTable = "workflow_{$bindingKey}_instances";
@@ -279,23 +267,17 @@ class MakeWorkflowCommand extends Command
         $this->newLine();
     }
 
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
     private function validateName(string $name): bool
     {
         if (trim($name) === '') {
             return false;
         }
 
-        // Allow PascalCase (OrderApproval) or snake_case (order_approval) and digits.
         return (bool) preg_match('/^[a-zA-Z][a-zA-Z0-9_]*$/', $name);
     }
 
     private function toSnakeCase(string $name): string
     {
-        // Convert PascalCase / camelCase to snake_case.
         $snake = preg_replace('/([a-z\d])([A-Z])/', '$1_$2', $name) ?? $name;
         $snake = preg_replace('/([A-Z]+)([A-Z][a-z])/', '$1_$2', $snake) ?? $snake;
 
@@ -304,13 +286,11 @@ class MakeWorkflowCommand extends Command
 
     private function toPascalCase(string $name): string
     {
-        // snake_case → PascalCase; already PascalCase stays as-is.
         return str_replace('_', '', ucwords($name, '_'));
     }
 
     protected function workflowsPath(): string
     {
-        // Supports Laravel app (basePath) or standalone fallback.
         if ($this->laravel !== null && method_exists($this->laravel, 'basePath')) {
             return $this->laravel->basePath('workflows');
         }
