@@ -267,6 +267,141 @@ class WorkflowEngineTest extends TestCase
         $this->assertSame('hr_review', $history[0]['to_state']);
     }
 
+    public function test_can_returns_false_when_policy_evaluation_throws(): void
+    {
+        $functions = new FunctionRegistry();
+        $functions->register('throwsInPolicy', static function (): bool {
+            throw new \RuntimeException('forced policy error');
+        });
+
+        $storage = new InMemoryWorkflowRepository();
+        $parser = new Parser();
+        $validator = new Validator($functions);
+        $compiler = new Compiler();
+        $stateMachine = new StateMachine();
+        $rules = new RuleEngine($functions);
+        $policy = new PolicyEngine($rules);
+        $fields = new FieldEngine($rules);
+        $events = new Dispatcher('workflow.event.');
+        $executor = new TransitionExecutor($stateMachine, $policy, $storage, $events);
+        $updateExecutor = new UpdateExecutor($stateMachine, $policy, $fields, $storage, $events);
+
+        $engine = new WorkflowEngine(
+            $storage,
+            $parser,
+            $validator,
+            $compiler,
+            $stateMachine,
+            $executor,
+            $fields,
+            $policy,
+            $functions,
+            $events,
+            null,
+            true,
+            300,
+            null,
+            'tenant-default',
+            false,
+            $updateExecutor
+        );
+
+        $engine->activateDefinition('can_fallback_flow', [
+            'dsl_version' => 2,
+            'name' => 'can_fallback_flow',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['done'],
+            'states' => ['draft', 'done'],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'done',
+                    'action' => 'finish',
+                    'transition_id' => 'tr_finish',
+                    'allowed_if' => ['fn' => 'throwsInPolicy'],
+                ],
+            ],
+        ]);
+
+        $instance = $engine->start('can_fallback_flow');
+
+        $this->assertFalse($engine->can($instance['instance_id'], 'finish', []));
+
+        $persisted = $storage->getInstance($instance['instance_id']);
+        $this->assertSame('draft', $persisted['state']);
+        $this->assertSame(0, $persisted['version']);
+    }
+
+    public function test_available_actions_skips_failing_policy_transition_and_keeps_valid_actions(): void
+    {
+        $functions = new FunctionRegistry();
+        $functions->register('throwsInPolicy', static function (): bool {
+            throw new \RuntimeException('forced policy error');
+        });
+
+        $storage = new InMemoryWorkflowRepository();
+        $parser = new Parser();
+        $validator = new Validator($functions);
+        $compiler = new Compiler();
+        $stateMachine = new StateMachine();
+        $rules = new RuleEngine($functions);
+        $policy = new PolicyEngine($rules);
+        $fields = new FieldEngine($rules);
+        $events = new Dispatcher('workflow.event.');
+        $executor = new TransitionExecutor($stateMachine, $policy, $storage, $events);
+        $updateExecutor = new UpdateExecutor($stateMachine, $policy, $fields, $storage, $events);
+
+        $engine = new WorkflowEngine(
+            $storage,
+            $parser,
+            $validator,
+            $compiler,
+            $stateMachine,
+            $executor,
+            $fields,
+            $policy,
+            $functions,
+            $events,
+            null,
+            true,
+            300,
+            null,
+            'tenant-default',
+            false,
+            $updateExecutor
+        );
+
+        $engine->activateDefinition('available_actions_fallback_flow', [
+            'dsl_version' => 2,
+            'name' => 'available_actions_fallback_flow',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved', 'rejected'],
+            'states' => ['draft', 'approved', 'rejected'],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'approved',
+                    'action' => 'approve',
+                    'transition_id' => 'tr_approve',
+                    'allowed_if' => [],
+                ],
+                [
+                    'from' => 'draft',
+                    'to' => 'rejected',
+                    'action' => 'reject',
+                    'transition_id' => 'tr_reject',
+                    'allowed_if' => ['fn' => 'throwsInPolicy'],
+                ],
+            ],
+        ]);
+
+        $instance = $engine->start('available_actions_fallback_flow');
+
+        $this->assertSame(['approve'], $engine->availableActions($instance['instance_id'], []));
+    }
+
     public function test_it_emits_diagnostics_for_transition_success_and_failure(): void
     {
         $functions = new FunctionRegistry();
@@ -325,17 +460,16 @@ class WorkflowEngineTest extends TestCase
         $instance = $engine->start('diagnostic_flow');
         $engine->execute($instance['instance_id'], 'finish');
 
+        $this->expectException(InvalidTransitionException::class);
+
         try {
             $engine->execute($instance['instance_id'], 'reopen');
-            $this->fail('Expected InvalidTransitionException was not thrown');
-        } catch (InvalidTransitionException) {
-            $this->assertTrue(true);
+        } finally {
+            $this->assertCount(2, $diagnostics->events);
+            $this->assertSame('transition.executed', $diagnostics->events[0]['event']);
+            $this->assertSame('transition.failed', $diagnostics->events[1]['event']);
+            $this->assertSame(3001, $diagnostics->events[1]['payload']['exception']['exception_code']);
         }
-
-        $this->assertCount(2, $diagnostics->events);
-        $this->assertSame('transition.executed', $diagnostics->events[0]['event']);
-        $this->assertSame('transition.failed', $diagnostics->events[1]['event']);
-        $this->assertSame(3001, $diagnostics->events[1]['payload']['exception']['exception_code']);
     }
 
     public function test_execution_builder_runs_inline_listeners_and_lifecycle_hooks(): void
@@ -846,6 +980,245 @@ class WorkflowEngineTest extends TestCase
             'actor' => 'owner-1',
             'data' => ['forbidden' => 'x'],
         ]);
+    }
+
+    public function test_can_update_returns_false_for_instances_in_final_state(): void
+    {
+        $functions = new FunctionRegistry();
+
+        $storage = new InMemoryWorkflowRepository();
+        $parser = new Parser();
+        $validator = new Validator($functions);
+        $compiler = new Compiler();
+        $stateMachine = new StateMachine();
+        $rules = new RuleEngine($functions);
+        $policy = new PolicyEngine($rules);
+        $fields = new FieldEngine($rules);
+        $events = new Dispatcher('workflow.event.');
+        $executor = new TransitionExecutor($stateMachine, $policy, $storage, $events);
+        $updateExecutor = new UpdateExecutor($stateMachine, $policy, $fields, $storage, $events);
+
+        $engine = new WorkflowEngine(
+            $storage,
+            $parser,
+            $validator,
+            $compiler,
+            $stateMachine,
+            $executor,
+            $fields,
+            $policy,
+            $functions,
+            $events,
+            null,
+            true,
+            300,
+            null,
+            'tenant-default',
+            false,
+            $updateExecutor
+        );
+
+        $engine->activateDefinition('final_update_guard', [
+            'dsl_version' => 2,
+            'name' => 'final_update_guard',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved'],
+            'states' => [
+                [
+                    'name' => 'draft',
+                    'permissions' => ['update' => true],
+                    'fields' => ['editable' => ['comment']],
+                ],
+                'approved',
+            ],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'approved',
+                    'action' => 'submit',
+                    'transition_id' => 'tr_submit',
+                    'allowed_if' => [],
+                ],
+            ],
+        ]);
+
+        $instance = $engine->start('final_update_guard');
+        $engine->execute($instance['instance_id'], 'submit');
+
+        $this->assertFalse($engine->canUpdate($instance['instance_id'], [
+            'data' => ['comment' => 'should-not-update'],
+        ]));
+    }
+
+    public function test_can_update_returns_false_when_no_editable_fields_are_available(): void
+    {
+        $functions = new FunctionRegistry();
+        $functions->register('canEditComment', static fn (array $context): bool => (bool) ($context['allow_edit'] ?? false));
+
+        $storage = new InMemoryWorkflowRepository();
+        $parser = new Parser();
+        $validator = new Validator($functions);
+        $compiler = new Compiler();
+        $stateMachine = new StateMachine();
+        $rules = new RuleEngine($functions);
+        $policy = new PolicyEngine($rules);
+        $fields = new FieldEngine($rules);
+        $events = new Dispatcher('workflow.event.');
+        $executor = new TransitionExecutor($stateMachine, $policy, $storage, $events);
+        $updateExecutor = new UpdateExecutor($stateMachine, $policy, $fields, $storage, $events);
+
+        $engine = new WorkflowEngine(
+            $storage,
+            $parser,
+            $validator,
+            $compiler,
+            $stateMachine,
+            $executor,
+            $fields,
+            $policy,
+            $functions,
+            $events,
+            null,
+            true,
+            300,
+            null,
+            'tenant-default',
+            false,
+            $updateExecutor
+        );
+
+        $engine->activateDefinition('editable_if_guard', [
+            'dsl_version' => 2,
+            'name' => 'editable_if_guard',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved'],
+            'states' => [
+                [
+                    'name' => 'draft',
+                    'permissions' => ['update' => true],
+                    'fields' => [
+                        'comment' => [
+                            'editable' => true,
+                            'editable_if' => ['fn' => 'canEditComment'],
+                        ],
+                    ],
+                ],
+                'approved',
+            ],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'approved',
+                    'action' => 'submit',
+                    'transition_id' => 'tr_submit',
+                    'allowed_if' => [],
+                ],
+            ],
+        ]);
+
+        $instance = $engine->start('editable_if_guard');
+
+        $this->assertFalse($engine->canUpdate($instance['instance_id'], [
+            'allow_edit' => false,
+            'data' => ['comment' => 'blocked'],
+        ]));
+    }
+
+    public function test_update_failure_does_not_mutate_state_or_history_and_emits_failure_event(): void
+    {
+        $functions = new FunctionRegistry();
+        $functions->register('isOwner', static fn (array $context): bool => (($context['actor'] ?? null) === (($context['subject']['subject_id'] ?? null))));
+
+        $storage = new InMemoryWorkflowRepository();
+        $parser = new Parser();
+        $validator = new Validator($functions);
+        $compiler = new Compiler();
+        $stateMachine = new StateMachine();
+        $rules = new RuleEngine($functions);
+        $policy = new PolicyEngine($rules);
+        $fields = new FieldEngine($rules);
+        $events = new Dispatcher('workflow.event.');
+        $executor = new TransitionExecutor($stateMachine, $policy, $storage, $events);
+        $updateExecutor = new UpdateExecutor($stateMachine, $policy, $fields, $storage, $events);
+
+        $engine = new WorkflowEngine(
+            $storage,
+            $parser,
+            $validator,
+            $compiler,
+            $stateMachine,
+            $executor,
+            $fields,
+            $policy,
+            $functions,
+            $events,
+            null,
+            true,
+            300,
+            null,
+            'tenant-default',
+            false,
+            $updateExecutor
+        );
+
+        $engine->activateDefinition('update_failure_guard', [
+            'dsl_version' => 2,
+            'name' => 'update_failure_guard',
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved'],
+            'states' => [
+                [
+                    'name' => 'draft',
+                    'permissions' => [
+                        'update' => [
+                            'allowed_if' => ['fn' => 'isOwner'],
+                        ],
+                    ],
+                    'fields' => [
+                        'comment' => ['editable' => true],
+                    ],
+                ],
+                'approved',
+            ],
+            'transitions' => [
+                [
+                    'from' => 'draft',
+                    'to' => 'approved',
+                    'action' => 'submit',
+                    'transition_id' => 'tr_submit',
+                    'allowed_if' => [],
+                ],
+            ],
+        ]);
+
+        $instance = $engine->start('update_failure_guard', [
+            'subject' => ['subject_type' => 'user', 'subject_id' => 'owner-1'],
+            'data' => ['comment' => 'initial'],
+        ]);
+
+        $this->expectException(InvalidUpdateException::class);
+
+        try {
+            $engine->update($instance['instance_id'], [
+                'actor' => 'owner-1',
+                'data' => ['forbidden' => 'x'],
+            ]);
+        } finally {
+            $persisted = $storage->getInstance($instance['instance_id']);
+            $this->assertSame('draft', $persisted['state']);
+            $this->assertSame(0, $persisted['version']);
+            $this->assertSame('initial', $persisted['data']['comment']);
+            $this->assertCount(0, $engine->history($instance['instance_id']));
+
+            $dispatched = $events->dispatchedEvents();
+            $this->assertCount(2, $dispatched);
+            $this->assertSame('workflow.event.instance_started', $dispatched[0]->fullEventName('workflow.event.'));
+            $this->assertSame('workflow.event.transition_failed', $dispatched[1]->fullEventName('workflow.event.'));
+            $this->assertSame('update', $dispatched[1]->toPayload()['action']);
+        }
     }
 
     public function test_execute_fails_when_transition_required_fields_are_missing_from_merged_payload(): void

@@ -129,12 +129,9 @@ class DatabaseWorkflowEngineTest extends TestCase
 
     public function test_database_engine_full_flow_persists_history_and_dispatches_after_commit(): void
     {
-        $functions = new FunctionRegistry();
-        $functions->register('isHR', static fn (array $context): bool => in_array('HR', $context['roles'] ?? [], true));
-
-        $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
-        $dispatcher = new Dispatcher('workflow.event.');
-        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+        [$functions, $storage, $dispatcher, $engine] = $this->defaultHarness(static function (FunctionRegistry $functions): void {
+            $functions->register('isHR', static fn (array $context): bool => in_array('HR', $context['roles'] ?? [], true));
+        });
 
         $engine->activateDefinition('termination_request', [
             'dsl_version' => 2,
@@ -241,10 +238,7 @@ class DatabaseWorkflowEngineTest extends TestCase
 
     public function test_database_engine_uses_static_tenant_scope_and_rejects_duplicate_version(): void
     {
-        $functions = new FunctionRegistry();
-        $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
-        $dispatcher = new Dispatcher('workflow.event.');
-        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+        [, , , $engine] = $this->defaultHarness();
 
         $engine->activateDefinition('onboarding', [
             'dsl_version' => 2,
@@ -289,10 +283,7 @@ class DatabaseWorkflowEngineTest extends TestCase
 
     public function test_existing_instance_keeps_original_workflow_definition_id_after_new_version_activation(): void
     {
-        $functions = new FunctionRegistry();
-        $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
-        $dispatcher = new Dispatcher('workflow.event.');
-        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+        [, $storage, , $engine] = $this->defaultHarness();
 
         $version1Id = $engine->activateDefinition('onboarding', [
             'dsl_version' => 2,
@@ -542,10 +533,7 @@ class DatabaseWorkflowEngineTest extends TestCase
 
     public function test_database_engine_blocks_transitions_from_final_state_even_if_configured(): void
     {
-        $functions = new FunctionRegistry();
-        $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
-        $dispatcher = new Dispatcher('workflow.event.');
-        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+        [, , , $engine] = $this->defaultHarness();
 
         $engine->activateDefinition('closure_flow', [
             'dsl_version' => 2,
@@ -588,12 +576,9 @@ class DatabaseWorkflowEngineTest extends TestCase
 
     public function test_database_engine_exposes_available_actions_and_history(): void
     {
-        $functions = new FunctionRegistry();
-        $functions->register('isHR', static fn (array $context): bool => in_array('HR', $context['roles'] ?? [], true));
-
-        $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
-        $dispatcher = new Dispatcher('workflow.event.');
-        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+        [, , , $engine] = $this->defaultHarness(static function (FunctionRegistry $functions): void {
+            $functions->register('isHR', static fn (array $context): bool => in_array('HR', $context['roles'] ?? [], true));
+        });
 
         $engine->activateDefinition('termination_request', [
             'dsl_version' => 2,
@@ -640,12 +625,9 @@ class DatabaseWorkflowEngineTest extends TestCase
 
     public function test_database_engine_updates_data_in_place_and_records_update_history(): void
     {
-        $functions = new FunctionRegistry();
-        $functions->register('isOwner', static fn (array $context): bool => (($context['actor'] ?? null) === (($context['subject']['subject_id'] ?? null))));
-
-        $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
-        $dispatcher = new Dispatcher('workflow.event.');
-        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+        [, , $dispatcher, $engine] = $this->defaultHarness(static function (FunctionRegistry $functions): void {
+            $functions->register('isOwner', static fn (array $context): bool => (($context['actor'] ?? null) === (($context['subject']['subject_id'] ?? null))));
+        });
 
         $engine->activateDefinition('draft_updates', [
             'dsl_version' => 2,
@@ -705,10 +687,7 @@ class DatabaseWorkflowEngineTest extends TestCase
 
     public function test_database_engine_fails_transition_when_required_fields_are_missing(): void
     {
-        $functions = new FunctionRegistry();
-        $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
-        $dispatcher = new Dispatcher('workflow.event.');
-        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+        [, $storage, $dispatcher, $engine] = $this->defaultHarness();
 
         $engine->activateDefinition('required_transition_fields', [
             'dsl_version' => 2,
@@ -735,30 +714,26 @@ class DatabaseWorkflowEngineTest extends TestCase
             'data' => ['comment' => 'already set'],
         ]);
 
+        $this->expectException(InvalidTransitionValidationException::class);
+
         try {
             $engine->execute($instance['instance_id'], 'submit', []);
-            $this->fail('Expected InvalidTransitionValidationException was not thrown');
-        } catch (InvalidTransitionValidationException) {
-            $this->assertTrue(true);
+        } finally {
+            $persisted = $storage->getInstance($instance['instance_id']);
+            $this->assertSame('draft', $persisted['state']);
+            $this->assertSame(0, $persisted['version']);
+
+            $histories = $this->capsule->getConnection()->table('workflow_histories')->get();
+            $this->assertCount(0, $histories);
+
+            $eventNames = array_map(static fn ($event): string => $event->fullEventName('workflow.event.'), $dispatcher->dispatchedEvents());
+            $this->assertSame(['workflow.event.instance_started', 'workflow.event.transition_failed'], $eventNames);
         }
-
-        $persisted = $storage->getInstance($instance['instance_id']);
-        $this->assertSame('draft', $persisted['state']);
-        $this->assertSame(0, $persisted['version']);
-
-        $histories = $this->capsule->getConnection()->table('workflow_histories')->get();
-        $this->assertCount(0, $histories);
-
-        $eventNames = array_map(static fn ($event): string => $event->fullEventName('workflow.event.'), $dispatcher->dispatchedEvents());
-        $this->assertSame(['workflow.event.instance_started', 'workflow.event.transition_failed'], $eventNames);
     }
 
     public function test_database_engine_allows_transition_when_required_fields_are_present_after_merge(): void
     {
-        $functions = new FunctionRegistry();
-        $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
-        $dispatcher = new Dispatcher('workflow.event.');
-        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+        [, , , $engine] = $this->defaultHarness();
 
         $engine->activateDefinition('required_transition_fields', [
             'dsl_version' => 2,
@@ -791,6 +766,26 @@ class DatabaseWorkflowEngineTest extends TestCase
 
         $this->assertSame('approved', $updated['state']);
         $this->assertSame(1, $updated['version']);
+    }
+
+    /**
+     * @param null|callable(FunctionRegistry): void $configureFunctions
+     *
+     * @return array{0: FunctionRegistry, 1: DatabaseWorkflowRepository, 2: Dispatcher, 3: WorkflowEngine}
+     */
+    private function defaultHarness(?callable $configureFunctions = null): array
+    {
+        $functions = new FunctionRegistry();
+
+        if ($configureFunctions !== null) {
+            $configureFunctions($functions);
+        }
+
+        $storage = new DatabaseWorkflowRepository($this->capsule->getConnection());
+        $dispatcher = new Dispatcher('workflow.event.');
+        $engine = $this->buildEngine($storage, $dispatcher, $functions);
+
+        return [$functions, $storage, $dispatcher, $engine];
     }
 
     private function buildEngine(

@@ -465,6 +465,98 @@ class ValidatorTest extends TestCase
         ]);
     }
 
+    public function test_it_fails_when_transition_from_state_is_not_declared(): void
+    {
+        $validator = new Validator(new FunctionRegistry());
+
+        try {
+            $validator->validate([
+                'dsl_version' => 2,
+                'name' => 'termination_request',
+                'version' => 1,
+                'initial_state' => 'draft',
+                'final_states' => ['approved'],
+                'states' => ['draft', 'approved'],
+                'transitions' => [
+                    [
+                        'from' => 'review',
+                        'to' => 'approved',
+                        'action' => 'approve',
+                        'transition_id' => 'tr_approve',
+                        'allowed_if' => [],
+                    ],
+                ],
+            ]);
+
+            $this->fail('Expected DSLValidationException was not thrown');
+        } catch (DSLValidationException $exception) {
+            $this->assertSame('Transition from must exist in states at transitions.0.from', $exception->getMessage());
+            $this->assertSame('transitions.0.from', $exception->nodePath());
+        }
+    }
+
+    public function test_it_fails_when_transition_to_state_is_not_declared(): void
+    {
+        $validator = new Validator(new FunctionRegistry());
+
+        try {
+            $validator->validate([
+                'dsl_version' => 2,
+                'name' => 'termination_request',
+                'version' => 1,
+                'initial_state' => 'draft',
+                'final_states' => ['approved'],
+                'states' => ['draft', 'approved'],
+                'transitions' => [
+                    [
+                        'from' => 'draft',
+                        'to' => 'rejected',
+                        'action' => 'approve',
+                        'transition_id' => 'tr_approve',
+                        'allowed_if' => [],
+                    ],
+                ],
+            ]);
+
+            $this->fail('Expected DSLValidationException was not thrown');
+        } catch (DSLValidationException $exception) {
+            $this->assertSame('Transition to must exist in states at transitions.0.to', $exception->getMessage());
+            $this->assertSame('transitions.0.to', $exception->nodePath());
+        }
+    }
+
+    public function test_it_fails_when_allowed_if_args_is_not_array(): void
+    {
+        $validator = new Validator(new FunctionRegistry());
+
+        try {
+            $validator->validate([
+                'dsl_version' => 2,
+                'name' => 'termination_request',
+                'version' => 1,
+                'initial_state' => 'draft',
+                'final_states' => ['approved'],
+                'states' => ['draft', 'approved'],
+                'transitions' => [
+                    [
+                        'from' => 'draft',
+                        'to' => 'approved',
+                        'action' => 'approve',
+                        'transition_id' => 'tr_approve',
+                        'allowed_if' => [
+                            'args' => 'invalid',
+                        ],
+                    ],
+                ],
+            ]);
+
+            $this->fail('Expected DSLValidationException was not thrown');
+        } catch (DSLValidationException $exception) {
+            $this->assertSame('args must be an array at transitions.0.allowed_if.args', $exception->getMessage());
+            $this->assertSame('transitions.0.allowed_if.args', $exception->nodePath());
+        }
+    }
+
     public function test_it_accepts_transition_validation_required_with_string_fields(): void
     {
         $validator = new Validator(new FunctionRegistry());

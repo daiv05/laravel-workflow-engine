@@ -181,4 +181,205 @@ class DatabaseWorkflowRepositoryTest extends TestCase
             'transitions' => [],
         ], 'tenant-a');
     }
+
+    public function test_create_instance_append_history_and_read_back(): void
+    {
+        $repository = new DatabaseWorkflowRepository($this->capsule->getConnection());
+
+        $definitionId = $repository->activateDefinition('termination_request', [
+            'dsl_version' => 2,
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved'],
+            'states' => ['draft', 'approved'],
+            'transitions' => [],
+        ]);
+
+        $repository->createInstance([
+            'instance_id' => '33333333-3333-4333-8333-333333333333',
+            'workflow_definition_id' => $definitionId,
+            'tenant_id' => null,
+            'state' => 'draft',
+            'data' => ['request_id' => 77],
+            'version' => 0,
+            'subject_type' => 'App\\Models\\Request',
+            'subject_id' => '77',
+            'created_at' => '2026-03-24T10:00:00+00:00',
+            'updated_at' => '2026-03-24T10:00:00+00:00',
+        ]);
+
+        $repository->appendHistory([
+            'instance_id' => '33333333-3333-4333-8333-333333333333',
+            'transition_id' => 'tr_approve',
+            'action' => 'approve',
+            'from_state' => 'draft',
+            'to_state' => 'approved',
+            'actor' => 'tester',
+            'payload' => 'scalar payload',
+            'created_at' => '2026-03-24T10:05:00+00:00',
+        ]);
+
+        $history = $repository->getHistory('33333333-3333-4333-8333-333333333333');
+
+        $this->assertCount(1, $history);
+        $this->assertSame('approve', $history[0]['action']);
+        $this->assertSame(['value' => 'scalar payload'], $history[0]['payload']);
+    }
+
+    public function test_get_latest_instance_for_subject_applies_workflow_and_tenant_filters(): void
+    {
+        $repository = new DatabaseWorkflowRepository($this->capsule->getConnection());
+
+        $approvalDefinitionId = $repository->activateDefinition('approval_flow', [
+            'dsl_version' => 2,
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved'],
+            'states' => ['draft', 'approved'],
+            'transitions' => [],
+        ], 'tenant-a');
+
+        $otherDefinitionId = $repository->activateDefinition('other_flow', [
+            'dsl_version' => 2,
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['done'],
+            'states' => ['draft', 'done'],
+            'transitions' => [],
+        ], 'tenant-a');
+
+        $repository->createInstance([
+            'instance_id' => '44444444-4444-4444-8444-444444444441',
+            'workflow_definition_id' => $approvalDefinitionId,
+            'tenant_id' => 'tenant-a',
+            'subject_type' => 'App\\Models\\Order',
+            'subject_id' => '99',
+            'state' => 'draft',
+            'data' => [],
+            'version' => 0,
+            'created_at' => '2026-03-24T10:00:00+00:00',
+        ]);
+
+        $repository->createInstance([
+            'instance_id' => '44444444-4444-4444-8444-444444444442',
+            'workflow_definition_id' => $approvalDefinitionId,
+            'tenant_id' => 'tenant-a',
+            'subject_type' => 'App\\Models\\Order',
+            'subject_id' => '99',
+            'state' => 'draft',
+            'data' => [],
+            'version' => 0,
+            'created_at' => '2026-03-24T11:00:00+00:00',
+        ]);
+
+        $repository->createInstance([
+            'instance_id' => '44444444-4444-4444-8444-444444444443',
+            'workflow_definition_id' => $otherDefinitionId,
+            'tenant_id' => 'tenant-a',
+            'subject_type' => 'App\\Models\\Order',
+            'subject_id' => '99',
+            'state' => 'draft',
+            'data' => [],
+            'version' => 0,
+            'created_at' => '2026-03-24T12:00:00+00:00',
+        ]);
+
+        $repository->createInstance([
+            'instance_id' => '44444444-4444-4444-8444-444444444444',
+            'workflow_definition_id' => $approvalDefinitionId,
+            'tenant_id' => 'tenant-b',
+            'subject_type' => 'App\\Models\\Order',
+            'subject_id' => '99',
+            'state' => 'draft',
+            'data' => [],
+            'version' => 0,
+            'created_at' => '2026-03-24T13:00:00+00:00',
+        ]);
+
+        $latest = $repository->getLatestInstanceForSubject('approval_flow', [
+            'subject_type' => 'App\\Models\\Order',
+            'subject_id' => '99',
+        ], 'tenant-a');
+
+        $this->assertNotNull($latest);
+        $this->assertSame('44444444-4444-4444-8444-444444444442', $latest['instance_id']);
+    }
+
+    public function test_get_instances_and_latest_active_for_subject_apply_filters(): void
+    {
+        $repository = new DatabaseWorkflowRepository($this->capsule->getConnection());
+
+        $definitionId = $repository->activateDefinition('approval_flow', [
+            'dsl_version' => 2,
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['approved', 'rejected'],
+            'states' => ['draft', 'approved', 'rejected'],
+            'transitions' => [],
+        ], 'tenant-a');
+
+        $otherDefinitionId = $repository->activateDefinition('other_flow', [
+            'dsl_version' => 2,
+            'version' => 1,
+            'initial_state' => 'draft',
+            'final_states' => ['done'],
+            'states' => ['draft', 'done'],
+            'transitions' => [],
+        ], 'tenant-a');
+
+        $repository->createInstance([
+            'instance_id' => '55555555-5555-4555-8555-555555555551',
+            'workflow_definition_id' => $definitionId,
+            'tenant_id' => 'tenant-a',
+            'subject_type' => 'App\\Models\\Order',
+            'subject_id' => '10',
+            'state' => 'approved',
+            'data' => [],
+            'version' => 1,
+            'created_at' => '2026-03-24T10:00:00+00:00',
+        ]);
+
+        $repository->createInstance([
+            'instance_id' => '55555555-5555-4555-8555-555555555552',
+            'workflow_definition_id' => $definitionId,
+            'tenant_id' => 'tenant-a',
+            'subject_type' => 'App\\Models\\Order',
+            'subject_id' => '10',
+            'state' => 'draft',
+            'data' => [],
+            'version' => 0,
+            'created_at' => '2026-03-24T11:00:00+00:00',
+        ]);
+
+        $repository->createInstance([
+            'instance_id' => '55555555-5555-4555-8555-555555555553',
+            'workflow_definition_id' => $otherDefinitionId,
+            'tenant_id' => 'tenant-a',
+            'subject_type' => 'App\\Models\\Order',
+            'subject_id' => '10',
+            'state' => 'draft',
+            'data' => [],
+            'version' => 0,
+            'created_at' => '2026-03-24T09:00:00+00:00',
+        ]);
+
+        $instances = $repository->getInstancesForSubject([
+            'subject_type' => 'App\\Models\\Order',
+            'subject_id' => '10',
+        ], 'tenant-a', 'approval_flow');
+
+        $this->assertCount(2, $instances);
+        $this->assertSame('55555555-5555-4555-8555-555555555551', $instances[0]['instance_id']);
+        $this->assertSame('55555555-5555-4555-8555-555555555552', $instances[1]['instance_id']);
+
+        $latestActive = $repository->getLatestActiveInstanceForSubject(
+            'approval_flow',
+            ['subject_type' => 'App\\Models\\Order', 'subject_id' => '10'],
+            ['approved', 'rejected'],
+            'tenant-a'
+        );
+
+        $this->assertNotNull($latestActive);
+        $this->assertSame('55555555-5555-4555-8555-555555555552', $latestActive['instance_id']);
+    }
 }

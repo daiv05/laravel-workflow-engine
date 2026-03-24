@@ -45,4 +45,39 @@ class ParserTest extends TestCase
         $this->expectException(DSLValidationException::class);
         $parser->parse("dsl_version: 2\nname: [\n");
     }
+
+    public function test_it_throws_when_scalar_definition_does_not_parse_to_array(): void
+    {
+        $parser = new Parser();
+
+        $this->expectException(DSLValidationException::class);
+        $this->expectExceptionMessage('Parsed YAML must produce an object/array structure at definition');
+
+        $parser->parse('"workflow"');
+    }
+
+    public function test_it_throws_when_dsl_version_is_missing(): void
+    {
+        $parser = new Parser();
+
+        $this->expectException(DSLValidationException::class);
+        $this->expectExceptionMessage('Missing required key: dsl_version at dsl_version');
+
+        $parser->parse([
+            'name' => 'wf-without-version',
+        ]);
+    }
+
+    public function test_it_throws_when_dsl_version_is_not_integer(): void
+    {
+        $parser = new Parser();
+
+        $this->expectException(DSLValidationException::class);
+        $this->expectExceptionMessage('dsl_version must be an integer at dsl_version');
+
+        $parser->parse([
+            'dsl_version' => '2',
+            'name' => 'wf-invalid-version-type',
+        ]);
+    }
 }

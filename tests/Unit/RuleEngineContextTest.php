@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Daiv05\LaravelWorkflowEngine\Tests\Unit;
 
 use Daiv05\LaravelWorkflowEngine\Exceptions\ContextValidationException;
+use Daiv05\LaravelWorkflowEngine\Exceptions\WorkflowException;
 use Daiv05\LaravelWorkflowEngine\Functions\FunctionRegistry;
 use Daiv05\LaravelWorkflowEngine\Rules\RuleEngine;
 use PHPUnit\Framework\TestCase;
@@ -100,5 +101,37 @@ class RuleEngineContextTest extends TestCase
         ], [
             'actor_id' => 42,
         ]));
+    }
+
+    public function test_it_returns_true_for_empty_rule(): void
+    {
+        $engine = new RuleEngine(new FunctionRegistry());
+
+        $this->assertTrue($engine->evaluate([], []));
+    }
+
+    public function test_it_throws_for_non_evaluable_rule_without_supported_operators(): void
+    {
+        $engine = new RuleEngine(new FunctionRegistry());
+
+        $this->expectException(WorkflowException::class);
+        $this->expectExceptionMessage('Rule is not evaluable with the supported operators');
+
+        $engine->evaluate(['unexpected' => 'shape'], []);
+    }
+
+    public function test_it_bubbles_exceptions_from_registered_functions(): void
+    {
+        $functions = new FunctionRegistry();
+        $functions->register('explode', static function (): bool {
+            throw new \RuntimeException('function exploded');
+        });
+
+        $engine = new RuleEngine($functions);
+
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('function exploded');
+
+        $engine->evaluate(['fn' => 'explode'], []);
     }
 }
