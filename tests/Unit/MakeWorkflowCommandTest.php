@@ -135,7 +135,7 @@ class MakeWorkflowCommandTest extends TestCase
         $files = glob($this->tempDir . '/database/migrations/*.php');
 
         $this->assertCount(1, $files);
-        $this->assertStringContainsString('create_workflow_order_approval_tables', basename($files[0]));
+        $this->assertStringContainsString('create_wk_order_approval_tables', basename($files[0]));
     }
 
     public function test_migration_contains_all_three_tables(): void
@@ -145,9 +145,9 @@ class MakeWorkflowCommandTest extends TestCase
         $files   = glob($this->tempDir . '/database/migrations/*.php');
         $content = file_get_contents($files[0]);
 
-        $this->assertStringContainsString('workflow_order_approval_instances', $content);
-        $this->assertStringContainsString('workflow_order_approval_histories', $content);
-        $this->assertStringContainsString('workflow_order_approval_outbox',    $content);
+        $this->assertStringContainsString('wk_order_approval_instances', $content);
+        $this->assertStringContainsString('wk_order_approval_histories', $content);
+        $this->assertStringContainsString('wk_order_approval_outbox',    $content);
     }
 
     public function test_migration_down_drops_all_three_tables(): void
@@ -162,6 +162,28 @@ class MakeWorkflowCommandTest extends TestCase
         $this->assertSame(3, $dropCount);
     }
 
+    public function test_generates_migration_with_custom_prefix(): void
+    {
+        $this->runCommand(['name' => 'OrderApproval', '--with-migrations' => true, '--prefix' => 'my_app_']);
+
+        $files   = glob($this->tempDir . '/database/migrations/*.php');
+        $content = file_get_contents($files[0]);
+
+        $this->assertStringContainsString('create_my_app_order_approval_tables', basename($files[0]));
+        $this->assertStringContainsString('my_app_order_approval_instances', $content);
+    }
+
+    public function test_generates_migration_with_empty_prefix(): void
+    {
+        $this->runCommand(['name' => 'OrderApproval', '--with-migrations' => true, '--prefix' => '']);
+
+        $files   = glob($this->tempDir . '/database/migrations/*.php');
+        $content = file_get_contents($files[0]);
+
+        $this->assertStringContainsString('create_order_approval_tables', basename($files[0]));
+        $this->assertStringContainsString('order_approval_instances', $content);
+    }
+
     // -------------------------------------------------------------------------
     // Config hint
     // -------------------------------------------------------------------------
@@ -172,9 +194,9 @@ class MakeWorkflowCommandTest extends TestCase
 
         $this->assertStringContainsString("'order_approval'",                          $output);
         $this->assertStringContainsString("'instances_table'",                         $output);
-        $this->assertStringContainsString('workflow_order_approval_instances',         $output);
-        $this->assertStringContainsString('workflow_order_approval_histories',         $output);
-        $this->assertStringContainsString('workflow_order_approval_outbox',            $output);
+        $this->assertStringContainsString('wk_order_approval_instances',               $output);
+        $this->assertStringContainsString('wk_order_approval_histories',               $output);
+        $this->assertStringContainsString('wk_order_approval_outbox',                  $output);
     }
 
     // -------------------------------------------------------------------------
@@ -263,6 +285,10 @@ class MakeWorkflowCommandTest extends TestCase
 
                 if ($key === 'with-migrations') {
                     return false;
+                }
+
+                if ($key === 'prefix') {
+                    return 'wk_';
                 }
 
                 return null;

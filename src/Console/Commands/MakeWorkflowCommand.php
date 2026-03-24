@@ -11,7 +11,8 @@ class MakeWorkflowCommand extends Command
     protected $signature = 'workflow:make
         {name              : Workflow name in PascalCase or snake_case, e.g. OrderApproval}
         {--format=yaml     : Stub format: yaml, json, or php (default: yaml)}
-        {--with-migrations : Also generate a migration file with dedicated instances, histories and outbox tables}';
+        {--with-migrations : Also generate a migration file with dedicated instances, histories and outbox tables}
+        {--prefix=wk_      : Table prefix for the migration and config hint. Pass empty string for no prefix}';
 
     protected $description = 'Scaffold a new workflow definition stub and optionally its database migration';
 
@@ -41,13 +42,15 @@ class MakeWorkflowCommand extends Command
         $bindingKey = $this->toSnakeCase($rawName);
         $stubName   = $this->toPascalCase($rawName);
 
+        $prefix = $this->option('prefix') ?? '';
+
         $this->generateStub($stubName, $bindingKey, $format);
 
         if ($this->option('with-migrations')) {
-            $this->generateMigration($bindingKey);
+            $this->generateMigration($bindingKey, $prefix);
         }
 
-        $this->printConfigHint($bindingKey);
+        $this->printConfigHint($bindingKey, $prefix);
 
         return self::SUCCESS;
     }
@@ -154,7 +157,7 @@ class MakeWorkflowCommand extends Command
         ];
     }
 
-    private function generateMigration(string $bindingKey): void
+    private function generateMigration(string $bindingKey, string $prefix): void
     {
         $migrationsDir = $this->migrationsPath();
 
@@ -163,20 +166,20 @@ class MakeWorkflowCommand extends Command
         }
 
         $timestamp = date('Y_m_d_His');
-        $filename  = "{$timestamp}_create_workflow_{$bindingKey}_tables.php";
+        $filename  = "{$timestamp}_create_{$prefix}{$bindingKey}_tables.php";
         $filePath  = $migrationsDir . DIRECTORY_SEPARATOR . $filename;
-        $content   = $this->buildMigration($bindingKey);
+        $content   = $this->buildMigration($bindingKey, $prefix);
 
         file_put_contents($filePath, $content);
 
         $this->line(sprintf('<info>[OK]</info> Created: database/migrations/%s', $filename));
     }
 
-    private function buildMigration(string $bindingKey): string
+    private function buildMigration(string $bindingKey, string $prefix): string
     {
-        $instancesTable = "workflow_{$bindingKey}_instances";
-        $historiesTable = "workflow_{$bindingKey}_histories";
-        $outboxTable    = "workflow_{$bindingKey}_outbox";
+        $instancesTable = "{$prefix}{$bindingKey}_instances";
+        $historiesTable = "{$prefix}{$bindingKey}_histories";
+        $outboxTable    = "{$prefix}{$bindingKey}_outbox";
 
         // Short prefix for index names to stay within DB identifier limits (max 64 chars).
         $p = substr($bindingKey, 0, 12);
@@ -250,11 +253,11 @@ class MakeWorkflowCommand extends Command
         PHP;
     }
 
-    private function printConfigHint(string $bindingKey): void
+    private function printConfigHint(string $bindingKey, string $prefix): void
     {
-        $instancesTable = "workflow_{$bindingKey}_instances";
-        $historiesTable = "workflow_{$bindingKey}_histories";
-        $outboxTable    = "workflow_{$bindingKey}_outbox";
+        $instancesTable = "{$prefix}{$bindingKey}_instances";
+        $historiesTable = "{$prefix}{$bindingKey}_histories";
+        $outboxTable    = "{$prefix}{$bindingKey}_outbox";
 
         $this->newLine();
         $this->line('<comment>Add this to config/workflow.php under \'storage.bindings\':</comment>');
